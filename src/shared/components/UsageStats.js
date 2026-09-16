@@ -200,7 +200,10 @@ const PERIODS = [
   { value: "60d", label: "60D" },
 ];
 
-export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
+export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false, mode = "full" } = {}) {
+  // mode: "analytics" = cards + chart + tables, "overview" = live topology + recent requests only, "full" = both
+  const showAnalytics = mode !== "overview";
+  const showLive = mode !== "analytics";
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -222,6 +225,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
   useEffect(() => {
+    if (!showLive) return;
     Promise.all([
       fetch("/api/providers").then((r) => r.ok ? r.json() : null),
       fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
@@ -249,7 +253,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         setProviders([...unique, ...noAuthProviders]);
       })
       .catch(() => {});
-  }, []);
+  }, [showLive]);
 
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
@@ -444,7 +448,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   return (
     <div className="flex min-w-0 flex-col gap-6">
       {/* Period selector (hidden when controlled by parent) */}
-      {!hidePeriodSelector && (
+      {showAnalytics && !hidePeriodSelector && (
         <div className="flex w-full items-center gap-2 sm:w-auto sm:self-end">
           <div className="grid flex-1 grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
             {PERIODS.map((p) => (
@@ -465,10 +469,10 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       )}
 
       {/* Overview cards */}
-      {loading ? spinner : <OverviewCards stats={stats} />}
+      {showAnalytics && (loading ? spinner : <OverviewCards stats={stats} />)}
 
       {/* Provider topology + Recent Requests */}
-      {loading ? spinner : (
+      {showLive && (loading ? spinner : (
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
             providers={providers}
@@ -478,12 +482,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           />
           <RecentRequests requests={stats.recentRequests || []} />
         </div>
-      )}
+      ))}
 
       {/* Token / Cost chart - sync period */}
-      {loading ? spinner : <UsageChart period={period} />}
+      {showAnalytics && (loading ? spinner : <UsageChart period={period} />)}
 
       {/* Table with dropdown selector */}
+      {showAnalytics && (
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <select
@@ -528,6 +533,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           />
         )}
       </div>
+      )}
     </div>
   );
 }

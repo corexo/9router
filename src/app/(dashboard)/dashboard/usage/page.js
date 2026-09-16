@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ProviderLimits from "./components/ProviderLimits";
+import ActiveQuotas from "./components/ActiveQuotas";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -29,7 +30,7 @@ function UsageContent() {
   const [period, setPeriod] = useState("today");
 
   const tabFromUrl = searchParams.get("tab");
-  const activeTab = tabFromUrl && ["overview", "logs", "details", "quota"].includes(tabFromUrl)
+  const activeTab = tabFromUrl && ["overview", "analytics", "logs", "details", "quota"].includes(tabFromUrl)
     ? tabFromUrl
     : "overview";
 
@@ -47,6 +48,7 @@ function UsageContent() {
         <SegmentedControl
           options={[
             { value: "overview", label: "Overview" },
+            { value: "analytics", label: "Analytics" },
             { value: "quota", label: "Quota Tracker" },
             { value: "details", label: "Details" },
           ]}
@@ -54,7 +56,7 @@ function UsageContent() {
           onChange={handleTabChange}
           className="w-full sm:w-auto"
         />
-        {activeTab === "overview" && (
+        {activeTab === "analytics" && (
           <SegmentedControl
             options={PERIODS}
             value={period}
@@ -67,7 +69,15 @@ function UsageContent() {
 
       {activeTab === "overview" && (
         <Suspense fallback={<CardSkeleton />}>
-          <UsageStats period={period} setPeriod={setPeriod} hidePeriodSelector />
+          <UsageStats mode="overview" />
+          <div className="mt-6">
+            <ActiveQuotas />
+          </div>
+        </Suspense>
+      )}
+      {activeTab === "analytics" && (
+        <Suspense fallback={<CardSkeleton />}>
+          <UsageStats mode="analytics" period={period} setPeriod={setPeriod} hidePeriodSelector />
         </Suspense>
       )}
       {activeTab === "quota" && (
