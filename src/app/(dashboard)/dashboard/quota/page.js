@@ -1,11 +1,6 @@
-import { Suspense } from "react";
-import { CardSkeleton } from "@/shared/components/Loading";
-import ProviderLimits from "../usage/components/ProviderLimits";
+import { redirect } from "next/navigation";
 
+// Quota Tracker merged into Usage page as "quota" tab
 export default function QuotaPage() {
-  return (
-    <Suspense fallback={<CardSkeleton />}>
-      <ProviderLimits />
-    </Suspense>
-  );
+  redirect("/dashboard/usage?tab=quota");
 }
