@@ -247,6 +247,13 @@ export default function CombosPage() {
         </div>
       )}
 
+      {/* Peak Hours config */}
+      <PeakHoursSection
+        combos={combos}
+        comboStrategies={comboStrategies}
+        onSetStrategy={handleSetComboStrategy}
+      />
+
       {/* Capacity Adapter */}
       <CapacityAdapterSection
         capacityAdapter={capacityAdapter}
@@ -297,6 +304,36 @@ const STRATEGY_OPTIONS = [
 ];
 
 const PEAK_DEFAULTS = { start: 14, end: 22, percent: 20 };
+
+// Central Peak Hours config: one row per combo, edited below the combo list.
+function PeakHoursSection({ combos, comboStrategies, onSetStrategy }) {
+  if (!combos.length) return null;
+  return (
+    <Card padding="sm">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="material-symbols-outlined text-[18px] text-text-muted">schedule</span>
+        <span className="text-sm font-semibold">Peak Hours</span>
+        <span className="text-xs text-text-muted">
+          During the window, matching models (claude/anthropic) only receive a percentage of requests
+        </span>
+      </div>
+      <div className="flex flex-col">
+        {combos.map((combo) => (
+          <div
+            key={combo.id}
+            className="flex flex-col gap-1 border-b border-border/50 py-2 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span className="min-w-0 truncate text-sm font-medium" title={combo.name}>{combo.name}</span>
+            <PeakHoursRow
+              peak={comboStrategies[combo.name]?.peakHours}
+              onSetStrategy={(patch) => onSetStrategy(combo.name, patch)}
+            />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 
 function PeakHoursRow({ peak, onSetStrategy }) {
   const [draft, setDraft] = useState(peak || PEAK_DEFAULTS);
@@ -414,8 +451,7 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                 )}
               </div>
             )}
-            {/* Peak hours: throttle matching models (claude/anthropic) during window */}
-            <PeakHoursRow peak={strategy.peakHours} onSetStrategy={onSetStrategy} />
+            {/* Peak hours config moved to central section below the combo list */}
           </div>
         </div>
 

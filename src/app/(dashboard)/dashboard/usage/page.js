@@ -6,6 +6,7 @@ import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/sha
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ProviderLimits from "./components/ProviderLimits";
 import ActiveQuotas from "./components/ActiveQuotas";
+import PeakHoursBanner from "./components/PeakHoursBanner";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -43,6 +44,8 @@ function UsageContent() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      <PeakHoursBanner />
+
       {/* Tabs + period selector on same row */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <SegmentedControl
