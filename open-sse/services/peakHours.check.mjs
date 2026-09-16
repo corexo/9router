@@ -64,4 +64,26 @@ const geminiOnly = { ...windowContainingNow, percent: 0, match: ["gemini"] };
 const rg = filterPeakHours(MODELS, geminiOnly);
 assert.deepEqual(rg, ["anthropic/claude-4", "openai/gpt-5", "cursor/claude-sonnet"]);
 
+// 9. days: today NOT in days -> outside peak, unchanged
+const wrongDay = { ...windowContainingNow, days: [((new Date().getDay() + 1) % 7)] };
+assert.deepEqual(filterPeakHours(MODELS, { ...wrongDay, percent: 0 }), MODELS);
+
+// 10. days: today in days -> active like before
+const rightDay = { ...windowContainingNow, days: [new Date().getDay()] };
+assert.deepEqual(filterPeakHours(MODELS, { ...rightDay, percent: 100 }), MODELS);
+assert.deepEqual(
+  filterPeakHours(MODELS, { ...rightDay, percent: 0 }),
+  ["openai/gpt-5", "google/gemini-3"]
+);
+
+// 11. days default (absent) = Mon-Fri: same as passing explicit today for the window check
+const today = new Date().getDay();
+const expectActiveDefault = [1, 2, 3, 4, 5].includes(today);
+const rDefault = filterPeakHours(MODELS, { ...windowContainingNow, percent: 0 });
+assert.deepEqual(rDefault, expectActiveDefault ? ["openai/gpt-5", "google/gemini-3"] : MODELS);
+
+// 12. empty days array falls back to Mon-Fr default
+const rEmpty = filterPeakHours(MODELS, { ...windowContainingNow, days: [], percent: 0 });
+assert.deepEqual(rEmpty, expectActiveDefault ? ["openai/gpt-5", "google/gemini-3"] : MODELS);
+
 console.log("peakHours.check: all assertions passed");

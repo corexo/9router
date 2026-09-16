@@ -258,7 +258,11 @@ export function filterPeakHours(models, peak) {
   const start = Number(peak.start);
   const end = Number(peak.end);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return models;
-  const hour = new Date().getHours();
+  const now = new Date();
+  // days: 0=Sun..6=Sat, default Mon-Fri. Empty/absent array = every day.
+  const days = Array.isArray(peak.days) && peak.days.length > 0 ? peak.days : [1, 2, 3, 4, 5];
+  if (!days.includes(now.getDay())) return models;
+  const hour = now.getHours();
   const inPeak = start <= end ? hour >= start && hour < end : hour >= start || hour < end;
   if (!inPeak) return models;
   const percent = Number(peak.percent);

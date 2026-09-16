@@ -50,7 +50,7 @@ export async function handleTts(request) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const peakModels = filterPeakHours(comboModels, comboStrategies[modelStr]?.peakHours);
+    const peakModels = filterPeakHours(comboModels, settings.peakHours);
     log.info("TTS", `Combo "${modelStr}" with ${peakModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,

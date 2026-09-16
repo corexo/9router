@@ -95,7 +95,7 @@ export async function handleFetch(request) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const peakModels = filterPeakHours(comboModels, comboStrategies[providerInput]?.peakHours);
+    const peakModels = filterPeakHours(comboModels, settings.peakHours);
     log.info("FETCH", `Combo "${providerInput}" with ${peakModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,

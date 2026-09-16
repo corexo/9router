@@ -51,6 +51,7 @@ export default function CombosPage() {
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
+  const [peakHours, setPeakHours] = useState(null);
   const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
   const { getCaps } = useModelCaps();
   const [confirmState, setConfirmState] = useState(null);
@@ -77,6 +78,7 @@ export default function CombosPage() {
         setActiveProviders(providersData.connections || []);
       }
       setComboStrategies(settingsData.comboStrategies || {});
+      setPeakHours(settingsData.peakHours || null);
       const rawAdapter = settingsData.capacityAdapter || {};
       const normalized = {};
       for (const cap of CAPACITY_ADAPTER_CAPS) {
@@ -157,6 +159,20 @@ export default function CombosPage() {
         }
       }
     });
+  };
+
+  // Global Peak Hours toggle. null = disabled (JSON null survives stringify; undefined would be dropped).
+  const handleSetPeakHours = async (peak) => {
+    setPeakHours(peak);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peakHours: peak }),
+      });
+    } catch (error) {
+      console.log("Error updating peak hours:", error);
+    }
   };
 
   // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
@@ -248,11 +264,7 @@ export default function CombosPage() {
       )}
 
       {/* Peak Hours config */}
-      <PeakHoursSection
-        combos={combos}
-        comboStrategies={comboStrategies}
-        onSetStrategy={handleSetComboStrategy}
-      />
+      <PeakHoursConfig peak={peakHours} onChange={handleSetPeakHours} />
 
       {/* Capacity Adapter */}
       <CapacityAdapterSection
@@ -303,98 +315,115 @@ const STRATEGY_OPTIONS = [
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
-const PEAK_DEFAULTS = { start: 14, end: 22, percent: 20 };
+const PEAK_DAYS = [
+  { value: 1, label: "Mo" },
+  { value: 2, label: "Tu" },
+  { value: 3, label: "We" },
+  { value: 4, label: "Th" },
+  { value: 5, label: "Fr" },
+  { value: 6, label: "Sa" },
+  { value: 0, label: "Su" },
+];
+const PEAK_DEFAULTS = { days: [1, 2, 3, 4, 5], start: 14, end: 22, percent: 20 };
 
-// Central Peak Hours config: one row per combo, edited below the combo list.
-function PeakHoursSection({ combos, comboStrategies, onSetStrategy }) {
-  if (!combos.length) return null;
+// Global Peak Hours: on selected weekdays, claude/anthropic models only receive
+// the given percent of combo requests during the window.
+function PeakHoursConfig({ peak, onChange }) {
+  const enabled = !!peak;
+  const [draft, setDraft] = useState(peak || PEAK_DEFAULTS);
+
+  const commit = (next) => {
+    const start = Math.min(23, Math.max(0, Number.parseInt(next.start, 10) || 0));
+    const end = Math.min(23, Math.max(0, Number.parseInt(next.end, 10) || 0));
+    const percent = Math.min(100, Math.max(0, Number.parseInt(next.percent, 10) || 0));
+    const days = Array.isArray(next.days) && next.days.length > 0 ? [...next.days].sort((a, b) => a - b) : PEAK_DEFAULTS.days;
+    setDraft({ days, start, end, percent });
+    onChange({ days, start, end, percent });
+  };
+
+  const inputClass =
+    "w-[52px] rounded border border-black/10 dark:border-white/10 bg-transparent px-1.5 py-0.5 text-[11px] font-mono text-primary focus:outline-none focus:border-primary/50";
+  const dayChipClass = (selected) =>
+    `rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+      selected
+        ? "border-primary/40 bg-primary/10 text-primary"
+        : "border-black/10 text-text-muted hover:bg-bg-hover dark:border-white/10"
+    }`;
+
   return (
     <Card padding="sm">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="material-symbols-outlined text-[18px] text-text-muted">schedule</span>
         <span className="text-sm font-semibold">Peak Hours</span>
         <span className="text-xs text-text-muted">
-          During the window, matching models (claude/anthropic) only receive a percentage of requests
+          On the selected days, claude/anthropic models only receive the given percent of combo requests during the window
         </span>
       </div>
-      <div className="flex flex-col">
-        {combos.map((combo) => (
-          <div
-            key={combo.id}
-            className="flex flex-col gap-1 border-b border-border/50 py-2 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <span className="min-w-0 truncate text-sm font-medium" title={combo.name}>{combo.name}</span>
-            <PeakHoursRow
-              peak={comboStrategies[combo.name]?.peakHours}
-              onSetStrategy={(patch) => onSetStrategy(combo.name, patch)}
-            />
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label
+          className="inline-flex cursor-pointer select-none items-center gap-1.5 text-[13px] font-medium text-text-muted"
+          title="Enable the throttling logic"
+        >
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => (e.target.checked ? commit(draft) : onChange(null))}
+          />
+          Enable
+        </label>
+        {enabled && (
+          <>
+            <span className="inline-flex items-center gap-1" role="group" aria-label="Peak days">
+              {PEAK_DAYS.map((d) => (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => {
+                    const days = draft.days.includes(d.value)
+                      ? draft.days.filter((x) => x !== d.value)
+                      : [...draft.days, d.value];
+                    commit({ ...draft, days });
+                  }}
+                  className={dayChipClass(draft.days.includes(d.value))}
+                  aria-pressed={draft.days.includes(d.value)}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </span>
+            <span className="inline-flex items-center gap-1 font-mono text-[12px]">
+              <input
+                className={inputClass}
+                type="number" min="0" max="23" value={draft.start}
+                onChange={(e) => setDraft({ ...draft, start: e.target.value })}
+                onBlur={(e) => commit({ ...draft, start: e.target.value })}
+                aria-label="Peak window start hour"
+              />
+              –
+              <input
+                className={inputClass}
+                type="number" min="0" max="23" value={draft.end}
+                onChange={(e) => setDraft({ ...draft, end: e.target.value })}
+                onBlur={(e) => commit({ ...draft, end: e.target.value })}
+                aria-label="Peak window end hour"
+              />
+              h
+            </span>
+            <span className="inline-flex items-center gap-1 font-mono text-[12px]">
+              keep
+              <input
+                className={inputClass}
+                type="number" min="0" max="100" value={draft.percent}
+                onChange={(e) => setDraft({ ...draft, percent: e.target.value })}
+                onBlur={(e) => commit({ ...draft, percent: e.target.value })}
+                aria-label="Percent of matching model requests kept"
+              />
+              % claude/anthropic
+            </span>
+          </>
+        )}
       </div>
     </Card>
-  );
-}
-
-function PeakHoursRow({ peak, onSetStrategy }) {
-  const [draft, setDraft] = useState(peak || PEAK_DEFAULTS);
-  const enabled = !!peak;
-
-  const commit = (next) => {
-    const start = Math.min(23, Math.max(0, Number.parseInt(next.start, 10) || 0));
-    const end = Math.min(23, Math.max(0, Number.parseInt(next.end, 10) || 0));
-    const percent = Math.min(100, Math.max(0, Number.parseInt(next.percent, 10) || 0));
-    setDraft({ start, end, percent });
-    onSetStrategy({ peakHours: { start, end, percent } });
-  };
-
-  const inputClass =
-    "w-[52px] rounded border border-black/10 dark:border-white/10 bg-transparent px-1.5 py-0.5 text-[11px] font-mono text-primary focus:outline-none focus:border-primary/50";
-
-  return (
-    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-      <label
-        className="inline-flex cursor-pointer select-none items-center gap-1 font-medium text-text-muted"
-        title="During the window, keep matching models (claude/anthropic) for only the given percent of requests"
-      >
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => {
-            if (e.target.checked) commit(draft);
-            else onSetStrategy({ peakHours: undefined });
-          }}
-        />
-        <span className="material-symbols-outlined text-[13px]">schedule</span> Peak Hours
-      </label>
-      {enabled && (
-        <span className="inline-flex items-center gap-1 font-mono">
-          <input
-            className={inputClass}
-            type="number" min="0" max="23" value={draft.start}
-            onChange={(e) => setDraft({ ...draft, start: e.target.value })}
-            onBlur={(e) => commit({ ...draft, start: e.target.value })}
-            aria-label="Peak window start hour"
-          />
-          –
-          <input
-            className={inputClass}
-            type="number" min="0" max="23" value={draft.end}
-            onChange={(e) => setDraft({ ...draft, end: e.target.value })}
-            onBlur={(e) => commit({ ...draft, end: e.target.value })}
-            aria-label="Peak window end hour"
-          />
-          h · keep
-          <input
-            className={inputClass}
-            type="number" min="0" max="100" value={draft.percent}
-            onChange={(e) => setDraft({ ...draft, percent: e.target.value })}
-            onBlur={(e) => commit({ ...draft, percent: e.target.value })}
-            aria-label="Percent of matching model requests kept"
-          />
-          % anthropic
-        </span>
-      )}
-    </div>
   );
 }
 

@@ -99,7 +99,7 @@ export async function handleChat(request, clientRawRequest = null) {
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const peakModels = filterPeakHours(comboModels, comboStrategies[modelStr]?.peakHours);
+    const peakModels = filterPeakHours(comboModels, settings.peakHours);
     const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, settings);
     const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
@@ -177,7 +177,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
       const requiredCapabilities = detectRequiredCapabilities(body);
-      const peakModels = filterPeakHours(comboModels, comboStrategies[modelStr]?.peakHours);
+      const peakModels = filterPeakHours(comboModels, settings.peakHours);
       const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, chatSettings);
       const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
