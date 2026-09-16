@@ -165,8 +165,10 @@ export default function CombosPage() {
     try {
       const updated = { ...comboStrategies };
       const next = { ...(updated[comboName] || {}), ...patch };
+      if (next.peakHours === undefined) delete next.peakHours;
       // Prune to keep settings clean: default fallback with no extras = no entry.
-      if (!next.fallbackStrategy || next.fallbackStrategy === "fallback") {
+      const hasExtras = !!next.peakHours || !!next.judgeModel || !!next.fusionTuning;
+      if ((!next.fallbackStrategy || next.fallbackStrategy === "fallback") && !hasExtras) {
         delete updated[comboName];
       } else {
         updated[comboName] = next;
@@ -294,6 +296,71 @@ const STRATEGY_OPTIONS = [
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
+const PEAK_DEFAULTS = { start: 14, end: 22, percent: 20 };
+
+function PeakHoursRow({ peak, onSetStrategy }) {
+  const [draft, setDraft] = useState(peak || PEAK_DEFAULTS);
+  const enabled = !!peak;
+
+  const commit = (next) => {
+    const start = Math.min(23, Math.max(0, Number.parseInt(next.start, 10) || 0));
+    const end = Math.min(23, Math.max(0, Number.parseInt(next.end, 10) || 0));
+    const percent = Math.min(100, Math.max(0, Number.parseInt(next.percent, 10) || 0));
+    setDraft({ start, end, percent });
+    onSetStrategy({ peakHours: { start, end, percent } });
+  };
+
+  const inputClass =
+    "w-[52px] rounded border border-black/10 dark:border-white/10 bg-transparent px-1.5 py-0.5 text-[11px] font-mono text-primary focus:outline-none focus:border-primary/50";
+
+  return (
+    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
+      <label
+        className="inline-flex cursor-pointer select-none items-center gap-1 font-medium text-text-muted"
+        title="During the window, keep matching models (claude/anthropic) for only the given percent of requests"
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            if (e.target.checked) commit(draft);
+            else onSetStrategy({ peakHours: undefined });
+          }}
+        />
+        <span className="material-symbols-outlined text-[13px]">schedule</span> Peak Hours
+      </label>
+      {enabled && (
+        <span className="inline-flex items-center gap-1 font-mono">
+          <input
+            className={inputClass}
+            type="number" min="0" max="23" value={draft.start}
+            onChange={(e) => setDraft({ ...draft, start: e.target.value })}
+            onBlur={(e) => commit({ ...draft, start: e.target.value })}
+            aria-label="Peak window start hour"
+          />
+          –
+          <input
+            className={inputClass}
+            type="number" min="0" max="23" value={draft.end}
+            onChange={(e) => setDraft({ ...draft, end: e.target.value })}
+            onBlur={(e) => commit({ ...draft, end: e.target.value })}
+            aria-label="Peak window end hour"
+          />
+          h · keep
+          <input
+            className={inputClass}
+            type="number" min="0" max="100" value={draft.percent}
+            onChange={(e) => setDraft({ ...draft, percent: e.target.value })}
+            onBlur={(e) => commit({ ...draft, percent: e.target.value })}
+            aria-label="Percent of matching model requests kept"
+          />
+          % anthropic
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const current = strategy.fallbackStrategy || "fallback";
@@ -347,6 +414,8 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                 )}
               </div>
             )}
+            {/* Peak hours: throttle matching models (claude/anthropic) during window */}
+            <PeakHoursRow peak={strategy.peakHours} onSetStrategy={onSetStrategy} />
           </div>
         </div>
 

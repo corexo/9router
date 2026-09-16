@@ -1,0 +1,67 @@
+// Runnable self-check for filterPeakHours. Run: node open-sse/services/peakHours.check.mjs
+import assert from "node:assert/strict";
+import { filterPeakHours } from "./combo.js";
+
+const MODELS = ["anthropic/claude-4", "openai/gpt-5", "google/gemini-3", "cursor/claude-sonnet"];
+const nowHour = new Date().getHours();
+
+// Helper: build a window that definitely contains / excludes the current hour.
+const windowContainingNow = { start: nowHour, end: (nowHour + 1) % 24 || 24 };
+const windowExcludingNow = (() => {
+  const start = (nowHour + 1) % 24;
+  const end = (nowHour + 2) % 24 || 24; // 1-hour window after now
+  return { start, end };
+})();
+
+// 1. No peak config -> unchanged
+assert.deepEqual(filterPeakHours(MODELS, undefined), MODELS);
+assert.deepEqual(filterPeakHours(MODELS, null), MODELS);
+assert.deepEqual(filterPeakHours([], { start: 0, end: 23, percent: 50 }), []);
+
+// 2. Invalid window -> unchanged
+assert.deepEqual(filterPeakHours(MODELS, { start: "x", end: 2, percent: 50 }), MODELS);
+
+// 3. Outside window -> unchanged
+const excluded = filterPeakHours(MODELS, { ...windowExcludingNow, percent: 0 });
+assert.deepEqual(excluded, MODELS, `window ${JSON.stringify(windowExcludingNow)} must exclude hour ${nowHour}`);
+
+// 4. Midnight-crossing window: start 22, end 4 active for hours 22,23,0,1,2,3
+const midnight = { start: 22, end: 4, percent: 0 };
+if (nowHour >= 4 && nowHour < 22) {
+  assert.deepEqual(filterPeakHours(MODELS, midnight), MODELS);
+} else {
+  // active now -> all matching removed, non-matching kept, never empty
+  const r = filterPeakHours(MODELS, midnight);
+  assert.ok(!r.includes("anthropic/claude-4"));
+  assert.ok(!r.includes("cursor/claude-sonnet"));
+  assert.ok(r.includes("openai/gpt-5"));
+}
+
+// 5. percent 0 with all models matching -> guard returns original (never empty)
+assert.deepEqual(filterPeakHours(["claude-4", "anthropic/opus"], { ...windowContainingNow, percent: 0 }), ["claude-4", "anthropic/opus"]);
+
+// 6. percent 100 -> unchanged
+assert.deepEqual(filterPeakHours(MODELS, { ...windowContainingNow, percent: 100 }), MODELS);
+
+// 7. percent 50 statistics: 1000 runs, kept lengths vary, non-matching always kept
+let anthropicKept = 0;
+let sawReduction = false;
+let sawFull = false;
+for (let i = 0; i < 1000; i++) {
+  const r = filterPeakHours(MODELS, { ...windowContainingNow, percent: 50 });
+  assert.ok(r.includes("openai/gpt-5"));
+  assert.ok(r.includes("google/gemini-3"));
+  assert.ok(r.length > 0);
+  if (r.includes("anthropic/claude-4")) anthropicKept++;
+  if (r.length < MODELS.length) sawReduction = true;
+  if (r.length === MODELS.length) sawFull = true;
+}
+assert.ok(sawReduction && sawFull, "50% should sometimes keep and sometimes drop matching models");
+assert.ok(anthropicKept > 400 && anthropicKept < 600, `kept ${anthropicKept}/1000, expected ~500`);
+
+// 8. Custom match list: only "gemini" throttled
+const geminiOnly = { ...windowContainingNow, percent: 0, match: ["gemini"] };
+const rg = filterPeakHours(MODELS, geminiOnly);
+assert.deepEqual(rg, ["anthropic/claude-4", "openai/gpt-5", "cursor/claude-sonnet"]);
+
+console.log("peakHours.check: all assertions passed");

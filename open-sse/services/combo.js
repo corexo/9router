@@ -246,6 +246,31 @@ export function resetComboRotation(comboName) {
 }
 
 /**
+ * Apply per-combo peak-hours throttle: inside the configured time window,
+ * matching models (default: anthropic/claude) are kept for only `percent` of
+ * requests. Outside the window or when disabled (field absent) — unchanged.
+ * @param {string[]} models - combo model list
+ * @param {{start?:number,end?:number,percent?:number,match?:string[]}} [peak]
+ * @returns {string[]} filtered list; never empty (falls back to input)
+ */
+export function filterPeakHours(models, peak) {
+  if (!Array.isArray(models) || models.length === 0 || !peak) return models;
+  const start = Number(peak.start);
+  const end = Number(peak.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return models;
+  const hour = new Date().getHours();
+  const inPeak = start <= end ? hour >= start && hour < end : hour >= start || hour < end;
+  if (!inPeak) return models;
+  const percent = Number(peak.percent);
+  if (Number.isFinite(percent) && percent >= 100) return models;
+  const keep = Number.isFinite(percent) ? percent : 0; // ponytail: percent 0 = full skip; UI always sends explicit value
+  const match = (Array.isArray(peak.match) && peak.match.length > 0 ? peak.match : ["claude", "anthropic"]).map((m) => String(m).toLowerCase());
+  // ponytail: random sampling; upgrade to deterministic per-combo counter (comboRotationState) if exact ratios needed
+  const kept = models.filter((m) => !match.some((p) => m.toLowerCase().includes(p)) || Math.random() * 100 < keep);
+  return kept.length > 0 ? kept : models;
+}
+
+/**
  * Get combo models from combos data
  * @param {string} modelStr - Model string to check
  * @param {Array|Object} combosData - Array of combos or object with combos
