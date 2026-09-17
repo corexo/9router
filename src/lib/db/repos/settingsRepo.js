@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS = {
   observabilityBatchSize: 20,
   observabilityFlushIntervalMs: 5000,
   observabilityMaxJsonSize: 5,
+  observabilityRevealBodies: false, // true = return full request/response bodies in request details
   outboundProxyEnabled: false,
   outboundProxyUrl: "",
   outboundNoProxy: "",

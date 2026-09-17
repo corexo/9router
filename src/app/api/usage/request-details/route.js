@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/usageDb";
+import { getSettings } from "@/lib/localDb";
 
 /**
  * GET /api/usage/request-details
@@ -48,20 +49,22 @@ export async function GET(request) {
     
     const result = await getRequestDetails(filter);
 
-    // Redact conversation payloads: the stored details include full request
-    // bodies (user prompts, tool calls) and provider responses. Returning them
-    // wholesale lets any dashboard-authenticated user (or, if requireLogin is
-    // disabled, anyone) read every user's conversation history. Keep the
-    // metadata (model, tokens, latency, status) but drop message content.
-    const redactedDetails = (result.details || []).map((d) => {
-      const redacted = { ...d };
-      for (const key of ["request", "providerRequest", "providerResponse", "response"]) {
-        if (redacted[key] !== undefined) {
-          redacted[key] = { redacted: true };
-        }
-      }
-      return redacted;
-    });
+    // Redact conversation payloads by default: the stored details include full
+    // request bodies (user prompts, tool calls) and provider responses. opt in
+    // via settings.observabilityRevealBodies (single-operator deployments).
+    const settings = await getSettings();
+    const revealBodies = settings?.observabilityRevealBodies === true;
+    const redactedDetails = revealBodies
+      ? result.details || []
+      : (result.details || []).map((d) => {
+          const redacted = { ...d };
+          for (const key of ["request", "providerRequest", "providerResponse", "response"]) {
+            if (redacted[key] !== undefined) {
+              redacted[key] = { redacted: true };
+            }
+          }
+          return redacted;
+        });
 
     return NextResponse.json({ ...result, details: redactedDetails });
   } catch (error) {
