@@ -200,10 +200,13 @@ const PERIODS = [
   { value: "60d", label: "60D" },
 ];
 
-export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false, mode = "full" } = {}) {
+export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false, mode = "full", widgets = {} } = {}) {
   // mode: "analytics" = cards + chart + tables, "overview" = live topology + recent requests only, "full" = both
   const showAnalytics = mode !== "overview";
   const showLive = mode !== "analytics";
+  // Widget visibility from settings.widgets; missing key = enabled.
+  const showTopology = widgets.providerFlow !== false;
+  const showRecent = widgets.recentRequests !== false;
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -472,15 +475,17 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {showAnalytics && (loading ? spinner : <OverviewCards stats={stats} />)}
 
       {/* Provider topology + Recent Requests */}
-      {showLive && (loading ? spinner : (
-        <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-          <ProviderTopology
-            providers={providers}
-            activeRequests={stats.activeRequests || []}
-            lastProvider={stats.recentRequests?.[0]?.provider || ""}
-            errorProvider={stats.errorProvider || ""}
-          />
-          <RecentRequests requests={stats.recentRequests || []} />
+      {showLive && (loading ? spinner : (showTopology || showRecent) && (
+        <div className={`grid min-w-0 grid-cols-1 items-stretch gap-2 ${showTopology && showRecent ? "lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]" : ""}`}>
+          {showTopology && (
+            <ProviderTopology
+              providers={providers}
+              activeRequests={stats.activeRequests || []}
+              lastProvider={stats.recentRequests?.[0]?.provider || ""}
+              errorProvider={stats.errorProvider || ""}
+            />
+          )}
+          {showRecent && <RecentRequests requests={stats.recentRequests || []} />}
         </div>
       ))}
 

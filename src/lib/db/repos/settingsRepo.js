@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
+  widgets: {},
   peakHours: null, // { days:[0-6 Sun=0], start, end, percent } — global claude/anthropic throttle window
   capacityAdapter: {
     vision: { enabled: true, roundRobin: false, models: [] },

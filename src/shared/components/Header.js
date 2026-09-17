@@ -84,6 +84,13 @@ const getPageInfo = (pathname) => {
       icon: "layers",
       breadcrumbs: [],
     };
+  if (pathname.includes("/widgets"))
+    return {
+      title: "Widgets",
+      description: "Choose which widgets appear on the Usage overview",
+      icon: "dashboard_customize",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/usage"))
     return {
       title: "Usage & Analytics",

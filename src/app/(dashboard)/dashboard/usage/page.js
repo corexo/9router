@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
@@ -29,6 +29,21 @@ function UsageContent() {
   const router = useRouter();
 
   const [period, setPeriod] = useState("today");
+  const [widgets, setWidgets] = useState({});
+
+  // Widget visibility from settings.widgets (missing key = enabled)
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((settings) => {
+        if (!cancelled) setWidgets(settings.widgets || {});
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const tabFromUrl = searchParams.get("tab");
   const activeTab = tabFromUrl && ["overview", "analytics", "logs", "details", "quota"].includes(tabFromUrl)
@@ -72,10 +87,12 @@ function UsageContent() {
 
       {activeTab === "overview" && (
         <Suspense fallback={<CardSkeleton />}>
-          <UsageStats mode="overview" />
-          <div className="mt-6">
-            <ActiveQuotas />
-          </div>
+          <UsageStats mode="overview" widgets={widgets} />
+          {widgets.activeQuotas !== false && (
+            <div className="mt-6">
+              <ActiveQuotas />
+            </div>
+          )}
         </Suspense>
       )}
       {activeTab === "analytics" && (
