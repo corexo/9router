@@ -12,7 +12,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
-import { handleComboChat, getComboModelsFromData, filterPeakHours } from "open-sse/services/combo.js";
+import { handleComboChat, getComboModelsFromData, filterPeakHours, getPeakForCombo } from "open-sse/services/combo.js";
 import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 
 /**
@@ -95,7 +95,7 @@ export async function handleFetch(request) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const peakModels = filterPeakHours(comboModels, settings.peakHours);
+    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, providerInput));
     log.info("FETCH", `Combo "${providerInput}" with ${peakModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,

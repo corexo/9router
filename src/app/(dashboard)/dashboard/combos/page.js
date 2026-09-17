@@ -264,7 +264,13 @@ export default function CombosPage() {
       )}
 
       {/* Peak Hours config */}
-      <PeakHoursConfig peak={peakHours} onChange={handleSetPeakHours} />
+      <PeakHoursConfig
+        peak={peakHours}
+        onChange={handleSetPeakHours}
+        combos={combos}
+        comboStrategies={comboStrategies}
+        onSetComboStrategy={handleSetComboStrategy}
+      />
 
       {/* Capacity Adapter */}
       <CapacityAdapterSection
@@ -328,7 +334,70 @@ const PEAK_DEFAULTS = { days: [1, 2, 3, 4, 5], start: 14, end: 22, percent: 20 }
 
 // Global Peak Hours: on selected weekdays, claude/anthropic models only receive
 // the given percent of combo requests during the window.
-function PeakHoursConfig({ peak, onChange }) {
+function dayRangeLabel(days) {
+  const labels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const sorted = [...days].sort((a, b) => a - b);
+  if (sorted.length === 7) return "daily";
+  if (sorted.join(",") === "1,2,3,4,5") return "Mo\u2013Fr";
+  return sorted.map((d) => labels[d]).join(",");
+}
+
+// Dynamic plain-text explanation of where requests go for one combo during the window.
+function peakSplitText(combo, percent) {
+  const match = ["claude", "anthropic"];
+  const models = combo.models || [];
+  const matched = models.filter((m) => match.some((p) => m.toLowerCase().includes(p)));
+  const rest = models.filter((m) => !match.some((p) => m.toLowerCase().includes(p)));
+  if (matched.length === 0) return "No claude/anthropic models in this combo \u2014 Peak Hours has no effect here.";
+  if (rest.length === 0) return `All models are claude/anthropic \u2014 ${100 - percent}% of requests fail over to nothing and are retried here.`;
+  return `${100 - percent}% \u2192 ${rest.join(", ")} \u00b7 ${percent}% \u2192 ${matched.join(", ")}`;
+}
+
+function ComboPeakRow({ combo, override, globalPercent, peak, onSet }) {
+  const enabled = override ? override.enabled !== false : true;
+  const effectivePercent = override && Number.isFinite(Number(override.percent)) ? Number(override.percent) : (Number.isFinite(Number(globalPercent)) ? Number(globalPercent) : 20);
+  const [pct, setPct] = useState(effectivePercent);
+  useEffect(() => setPct(effectivePercent), [effectivePercent]);
+
+  const commitPercent = () => {
+    const percent = Math.min(100, Math.max(0, Number.parseInt(pct, 10) || 0));
+    onSet({ enabled: true, percent });
+  };
+  const toggle = (e) => onSet({ enabled: e.target.checked, percent: Number.parseInt(pct, 10) || effectivePercent });
+
+  return (
+    <div className="border-b border-border/50 px-1 py-3 last:border-0 last:pb-0">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="inline-flex min-w-0 cursor-pointer select-none items-center gap-2">
+          <input type="checkbox" checked={enabled} onChange={toggle} />
+          <span className="truncate text-sm font-medium" title={combo.name}>{combo.name}</span>
+        </label>
+        {enabled && (
+          <label className="inline-flex items-center gap-2 font-mono text-[12px]">
+            keep
+            <input
+              type="range" min="0" max="100" step="5" value={Number(pct)}
+              onChange={(e) => setPct(e.target.value)}
+              onPointerUp={commitPercent} onKeyUp={commitPercent} onBlur={commitPercent}
+              className="w-32 accent-primary"
+              aria-label={`Peak keep percent for ${combo.name}`}
+            />
+            <span className="w-[34px] text-primary">{pct}%</span>
+          </label>
+        )}
+      </div>
+      <p className="mt-1 pl-6 text-xs leading-relaxed text-text-muted">
+        {peak
+          ? enabled
+            ? `${dayRangeLabel(peak.days || [])} ${peak.start}:00\u2013${peak.end}:00: ${peakSplitText(combo, Number(pct) || 0)}`
+            : `Off for this combo \u2014 during the window every request goes to ${combo.name}\u2019s models as usual.`
+          : "Peak Hours window is disabled globally \u2014 enable it above to throttle this combo."}
+      </p>
+    </div>
+  );
+}
+
+function PeakHoursConfig({ peak, onChange, combos = [], comboStrategies = {}, onSetComboStrategy }) {
   const enabled = !!peak;
   const [draft, setDraft] = useState(peak || PEAK_DEFAULTS);
 
@@ -412,6 +481,13 @@ function PeakHoursConfig({ peak, onChange }) {
             <span className="inline-flex items-center gap-1 font-mono text-[12px]">
               keep
               <input
+                type="range" min="0" max="100" step="5" value={Number(draft.percent) || 0}
+                onChange={(e) => setDraft({ ...draft, percent: e.target.value })}
+                onPointerUp={() => commit(draft)} onKeyUp={() => commit(draft)}
+                className="w-32 accent-primary"
+                aria-label="Percent of matching model requests kept"
+              />
+              <input
                 className={inputClass}
                 type="number" min="0" max="100" value={draft.percent}
                 onChange={(e) => setDraft({ ...draft, percent: e.target.value })}
@@ -423,6 +499,25 @@ function PeakHoursConfig({ peak, onChange }) {
           </>
         )}
       </div>
+
+      {/* Per-combo participation: checkbox + percent slider + dynamic flow explanation */}
+      {enabled && combos.length > 0 && (
+        <div className="mt-3 border-t border-border/50 pt-1">
+          <p className="px-1 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-text-muted">
+            Per combo
+          </p>
+          {combos.map((combo) => (
+            <ComboPeakRow
+              key={combo.id}
+              combo={combo}
+              override={comboStrategies[combo.name]?.peakHours}
+              globalPercent={draft.percent}
+              peak={peak}
+              onSet={(peakHours) => onSetComboStrategy(combo.name, { peakHours })}
+            />
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

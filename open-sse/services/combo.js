@@ -253,6 +253,18 @@ export function resetComboRotation(comboName) {
  * @param {{start?:number,end?:number,percent?:number,match?:string[]}} [peak]
  * @returns {string[]} filtered list; never empty (falls back to input)
  */
+// Effective peak config for one combo: global window (settings.peakHours) plus
+// optional per-combo override (comboStrategies[name].peakHours = { enabled, percent }).
+// Returns null when the global window is off or the combo opted out.
+export function getPeakForCombo(settings, comboName) {
+  const global = settings?.peakHours;
+  if (!global) return null;
+  const override = settings.comboStrategies?.[comboName]?.peakHours;
+  if (override && override.enabled === false) return null;
+  const percent = override && Number.isFinite(Number(override.percent)) ? Number(override.percent) : global.percent;
+  return { ...global, percent };
+}
+
 export function filterPeakHours(models, peak) {
   if (!Array.isArray(models) || models.length === 0 || !peak) return models;
   const start = Number(peak.start);

@@ -8,7 +8,7 @@ import { handleTtsCore } from "open-sse/handlers/ttsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
-import { handleComboChat, filterPeakHours } from "open-sse/services/combo.js";
+import { handleComboChat, filterPeakHours, getPeakForCombo } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
 
 // Derived from providers.js: any TTS provider not noAuth requires stored credentials
@@ -50,7 +50,7 @@ export async function handleTts(request) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const peakModels = filterPeakHours(comboModels, settings.peakHours);
+    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, modelStr));
     log.info("TTS", `Combo "${modelStr}" with ${peakModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,

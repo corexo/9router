@@ -1,6 +1,6 @@
 // Runnable self-check for filterPeakHours. Run: node open-sse/services/peakHours.check.mjs
 import assert from "node:assert/strict";
-import { filterPeakHours } from "./combo.js";
+import { filterPeakHours, getPeakForCombo } from "./combo.js";
 
 const MODELS = ["anthropic/claude-4", "openai/gpt-5", "google/gemini-3", "cursor/claude-sonnet"];
 const nowHour = new Date().getHours();
@@ -85,5 +85,17 @@ assert.deepEqual(rDefault, expectActiveDefault ? ["openai/gpt-5", "google/gemini
 // 12. empty days array falls back to Mon-Fr default
 const rEmpty = filterPeakHours(MODELS, { ...windowContainingNow, days: [], percent: 0 });
 assert.deepEqual(rEmpty, expectActiveDefault ? ["openai/gpt-5", "google/gemini-3"] : MODELS);
+
+// 13. getPeakForCombo: global off -> null, combo opt-out -> null, percent override
+const SETTINGS = { peakHours: { days: [1, 2, 3, 4, 5], start: 12, end: 18, percent: 20 }, comboStrategies: {} };
+assert.deepEqual(getPeakForCombo(SETTINGS, "any"), { days: [1, 2, 3, 4, 5], start: 12, end: 18, percent: 20 });
+assert.equal(getPeakForCombo({}, "any"), null);
+assert.deepEqual(getPeakForCombo({ peakHours: { start: 12, end: 18 } }, "any"), { start: 12, end: 18, percent: undefined });
+const optOut = { ...SETTINGS, comboStrategies: { A: { peakHours: { enabled: false, percent: 50 } } } };
+assert.equal(getPeakForCombo(optOut, "A"), null);
+assert.deepEqual(getPeakForCombo(optOut, "B"), { ...SETTINGS.peakHours, percent: 20 });
+const pctOverride = { ...SETTINGS, comboStrategies: { A: { peakHours: { enabled: true, percent: 0 } } } };
+assert.deepEqual(filterPeakHours(MODELS, getPeakForCombo(pctOverride, "A")),
+  filterPeakHours(MODELS, { ...SETTINGS.peakHours, percent: 0 }));
 
 console.log("peakHours.check: all assertions passed");

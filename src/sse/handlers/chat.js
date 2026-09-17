@@ -15,7 +15,7 @@ import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
-import { handleComboChat, handleFusionChat, detectRequiredCapabilities, filterPeakHours } from "open-sse/services/combo.js";
+import { handleComboChat, handleFusionChat, detectRequiredCapabilities, filterPeakHours, getPeakForCombo } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -99,7 +99,7 @@ export async function handleChat(request, clientRawRequest = null) {
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const peakModels = filterPeakHours(comboModels, settings.peakHours);
+    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, modelStr));
     const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, settings);
     const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
@@ -177,7 +177,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
       const requiredCapabilities = detectRequiredCapabilities(body);
-      const peakModels = filterPeakHours(comboModels, settings.peakHours);
+      const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, modelStr));
       const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, chatSettings);
       const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
