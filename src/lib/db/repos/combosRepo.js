@@ -66,6 +66,34 @@ export async function updateCombo(id, data) {
   return result;
 }
 
+export const BUILTIN_COMBOS = ["jev"];
+
+/**
+ * Ensure built-in combos (e.g. the fixed `jev` Jev candidate pool) exist and are
+ * flagged kind="builtin". Also migrates a user-created combo that already squat
+ * on a built-in name. Called from GET /api/combos so the dashboard and routing
+ * always see the fixed combo.
+ */
+export async function ensureBuiltinCombos() {
+  const db = await getAdapter();
+  for (const name of BUILTIN_COMBOS) {
+    const row = db.get(`SELECT * FROM combos WHERE name = ?`, [name]);
+    if (!row) {
+      const now = new Date().toISOString();
+      db.run(
+        `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), name, "builtin", stringifyJson([]), now, now]
+      );
+    } else if (row.kind !== "builtin") {
+      db.run(`UPDATE combos SET kind = ?, updatedAt = ? WHERE id = ?`, [
+        "builtin",
+        new Date().toISOString(),
+        row.id,
+      ]);
+    }
+  }
+}
+
 export async function deleteCombo(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);

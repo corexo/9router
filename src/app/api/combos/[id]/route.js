@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, BUILTIN_COMBOS } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
@@ -43,6 +43,15 @@ export async function PUT(request, { params }) {
     
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
+
+    // Built-in combos keep their name and kind; only their model list is editable
+    if (prev && BUILTIN_COMBOS.includes(prev.name.toLowerCase())) {
+      if (body.name && body.name !== prev.name) {
+        return NextResponse.json({ error: "Built-in combos cannot be renamed" }, { status: 400 });
+      }
+      delete body.name;
+      delete body.kind;
+    }
     const combo = await updateCombo(id, body);
     
     if (!combo) {
@@ -65,6 +74,9 @@ export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
     const prev = await getComboById(id);
+    if (prev && BUILTIN_COMBOS.includes(prev.name.toLowerCase())) {
+      return NextResponse.json({ error: "Built-in combos cannot be deleted" }, { status: 400 });
+    }
     const success = await deleteCombo(id);
     
     if (!success) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { getCombos, createCombo, getComboByName, ensureBuiltinCombos, BUILTIN_COMBOS } from "@/lib/localDb";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,7 @@ const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 // GET /api/combos - Get all combos
 export async function GET() {
   try {
+    await ensureBuiltinCombos();
     const combos = await getCombos();
     return NextResponse.json({ combos });
   } catch (error) {
@@ -30,6 +31,11 @@ export async function POST(request) {
     // Validate name format
     if (!VALID_NAME_REGEX.test(name)) {
       return NextResponse.json({ error: "Name can only contain letters, numbers, -, _ and ." }, { status: 400 });
+    }
+
+    // Built-in combo names are reserved and provisioned by 9Router itself
+    if (BUILTIN_COMBOS.includes(name.toLowerCase())) {
+      return NextResponse.json({ error: `"${name}" is a built-in combo and cannot be created` }, { status: 400 });
     }
 
     // Check if name already exists

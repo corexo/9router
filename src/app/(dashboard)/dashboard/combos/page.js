@@ -536,7 +536,14 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
             <span className="material-symbols-outlined text-primary text-[18px]">layers</span>
           </div>
           <div className="min-w-0 flex-1">
-            <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+            <span className="flex min-w-0 items-center gap-2">
+              <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+              {combo.kind === "builtin" && (
+                <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary" title="Fixed 9Router combo - models editable, cannot be renamed or deleted">
+                  Built-in
+                </span>
+              )}
+            </span>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
@@ -610,14 +617,16 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
               <span className="material-symbols-outlined text-[18px]">edit</span>
               <span className="text-[10px] leading-tight">Edit</span>
             </button>
-            <button
-              onClick={onDelete}
-              className="flex flex-col items-center rounded px-2 py-1 text-red-500 transition-colors hover:bg-red-500/10"
-              title="Delete"
-            >
-              <span className="material-symbols-outlined text-[18px]">delete</span>
-              <span className="text-[10px] leading-tight">Delete</span>
-            </button>
+            {combo.kind !== "builtin" && (
+              <button
+                onClick={onDelete}
+                className="flex flex-col items-center rounded px-2 py-1 text-red-500 transition-colors hover:bg-red-500/10"
+                title="Delete"
+              >
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+                <span className="text-[10px] leading-tight">Delete</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -987,17 +996,20 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         title={isEdit ? "Edit Combo" : "Create Combo"}
       >
         <div className="flex flex-col gap-3">
-          {/* Name */}
+          {/* Name (fixed for built-in combos; only models are editable) */}
           <div>
             <Input
               label="Combo Name"
               value={name}
-              onChange={handleNameChange}
+              onChange={combo?.kind === "builtin" ? undefined : handleNameChange}
+              disabled={combo?.kind === "builtin"}
               placeholder="my-combo"
               error={nameError}
             />
             <p className="text-[10px] text-text-muted mt-0.5">
-              Only letters, numbers, -, _ and . allowed
+              {combo?.kind === "builtin"
+                ? "Built-in combo - name is fixed, models are editable"
+                : "Only letters, numbers, -, _ and . allowed"}
             </p>
           </div>
 
