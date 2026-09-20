@@ -1,0 +1,11 @@
+# Jev AI Routing & Centralized Proxy in 9Router — Implementation Notes
+
+## Architecture & Integration (2026-09-20)
+- **Centralized Jev API Endpoint**: `/v1/jev-api` proxies SystemOne requests (`https://jev-ai.pro/api/v1/systemone`) using a single stored WebUI key or env fallback (`TYPESAFE_API_KEY`), recording token usage, credits, and latency.
+- **Pi Extensions Migration**: `jev-role-triage.ts` and `jev-quality-eval.ts` communicate directly with 9Router instead of external endpoints, using `X-Jev-Caller` tracking.
+- **Dynamic Model Router (`nineRouter/jev` & `jev`)**: Intercepts chat requests, extracts the last user prompt (up to 3,000 chars), and consults Jev to select a concrete model.
+- **Built-in `jev` Combo**: Created as a permanent `builtin` combo in SQLite (`kind: 'builtin'`). Name and delete are locked in API and UI, but user models are fully editable.
+- **Peak-Hour Exemption**: Claude peak-hour filtering is bypassed for the Jev pool.
+- **Context-Aware Filtering**: Estimates prompt tokens plus max output and excludes models whose `contextWindow` is too small (using 32K explicit override for Cloudflare Qwen and correct `cf` alias translation).
+- **Model Health Registry**: Automatically isolates failing models (permanent schema incompatibilities, 10-minute cooldown for rate limits/5xx/timeouts, request-scoped context overflows) and re-tests via dashboard.
+- **Timeout & Logging Hardening**: Jev decision timeout increased from 1,200ms default to 4,500ms to prevent premature fallback, with explicit selection logging (`Jev wählte '...'`).
