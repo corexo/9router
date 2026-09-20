@@ -21,6 +21,30 @@ describe("stripUnsupportedParams", () => {
     expect(body.messages[0].content).toBe("hello world");
   });
 
+  it("coerces Cloudflare AI null tool-call content to an empty string", () => {
+    const body = {
+      messages: [
+        { role: "user", content: "call the tool" },
+        { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "ls", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "c1", content: "ok" },
+      ],
+    };
+
+    stripUnsupportedParams("cloudflare-ai", "@cf/qwen/qwen2.5-coder-32b-instruct", body);
+
+    expect(body.messages[1].content).toBe("");
+    expect(body.messages[1].tool_calls).toHaveLength(1);
+    expect(body.messages.every((m) => typeof m.content === "string")).toBe(true);
+  });
+
+  it("leaves null content untouched for providers without flattenContent", () => {
+    const body = { messages: [{ role: "assistant", content: null }] };
+
+    stripUnsupportedParams("github", "gpt-4o-mini", body);
+
+    expect(body.messages[0].content).toBeNull();
+  });
+
   it("still drops unsupported GitHub model params", () => {
     const body = { temperature: 0.7, top_p: 1 };
 

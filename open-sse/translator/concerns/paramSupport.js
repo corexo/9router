@@ -47,10 +47,16 @@ export function stripUnsupportedParams(provider, model, body) {
     for (const key of rule.drop || []) {
       if (body[key] !== undefined) delete body[key];
     }
-    // CF Workers AI oneOf root schema only accepts content as plain string (#1926)
+    // CF Workers AI oneOf root schema only accepts content as plain string (#1926).
+    // Tool-call assistant messages carry content: null (OpenAI convention) — CF's
+    // schema rejects null at '/', so coerce null/undefined to "" as well (#1954).
     if (rule.flattenContent && Array.isArray(body.messages)) {
       for (const msg of body.messages) {
-        if (msg && Array.isArray(msg.content)) {
+        if (msg == null || msg.content == null) {
+          if (msg != null) msg.content = "";
+          continue;
+        }
+        if (Array.isArray(msg.content)) {
           msg.content = msg.content
             .map(b => (b?.type === "text" && typeof b.text === "string") ? b.text : "")
             .join("");
