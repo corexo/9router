@@ -17,6 +17,12 @@ export function logJevRequest(payload, numModels) {
   }
 }
 
+export function updateLastJevRequest(result) {
+  if (requestLog.length > 0) {
+    Object.assign(requestLog[0], result);
+  }
+}
+
 export function getJevRequestLog() {
   return requestLog;
 }

@@ -1,5 +1,5 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
-import { logJevRequest } from "@/lib/jev/requestLog.js";
+import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
@@ -162,6 +162,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
   const warn = options.warn || console.warn;
   const fail = (reason) => {
     warn(`[9Router-Jev] [WARN] ${reason} -> Fallback: ${fallback}`);
+    updateLastJevRequest({ fallbackUsed: fallback, fallbackReason: reason });
     return fallback;
   };
 
@@ -226,6 +227,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       signal: controller.signal,
     });
     if (!response.ok) {
+      updateLastJevRequest({ error: `HTTP ${response.status}` });
       logUsage({ status: "error", httpStatus: response.status, promptTokens: estimateTextTokens(requestBody), fallbackReason: `HTTP ${response.status}` });
       return fail(`Jev API HTTP ${response.status}`);
     }
@@ -248,6 +250,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       choice: typeof selected === "string" ? selected : undefined,
     });
     if (typeof selected !== "string" || !models.includes(selected)) {
+      updateLastJevRequest({ rawSelected: selected, rawThinking, invalid: true });
       options.info?.(`Jev wählte ungültig '${selected}'`);
       return fail(`Ungültige Jev-Auswahl '${selected}'`);
     }
@@ -255,10 +258,13 @@ export async function selectJevModel(body, availableModels, options = {}) {
     // Combo names never contain "/"; a thinking suffix only makes sense on a concrete
     // provider/model target, not on a combo (which resolves to many different models).
     const suffix = selected.includes("/") ? resolveThinkingSuffix(rawThinking, selected, options) : "";
+    updateLastJevRequest({ selectedModel: selected, rawThinking, resolvedThinking: suffix ? suffix.slice(1, -1) : null });
     options.info?.(`Jev wählte '${selected}'${suffix ? ` Thinking='${suffix.slice(1, -1)}'` : ""}${rawThinking && !suffix ? ` (angefragt '${rawThinking}', nicht anwendbar)` : ""}`);
     return `${selected}${suffix}`;
   } catch (error) {
-    logUsage({ status: "error", fallbackReason: error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}` });
+    const reason = error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}`;
+    updateLastJevRequest({ error: reason });
+    logUsage({ status: "error", fallbackReason: reason });
     return fail(error?.name === "AbortError" ? "Jev API Timeout" : `Jev API Fehler: ${error?.message || error}`);
   } finally {
     clearTimeout(timeoutId);

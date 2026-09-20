@@ -86,6 +86,38 @@ export default function JevRequestLogCard() {
                 <span className="font-semibold">{latest.enrichCriteria ? "YES (cost/usage/account)" : "NO (bare names only)"}</span>
               </div>
 
+              {latest.selectedModel && (
+                <div className="bg-green-50 border border-green-300 rounded p-2">
+                  <span className="text-gray-700">Jev selected: </span>
+                  <span className="font-bold text-green-800">{latest.selectedModel}</span>
+                  {latest.resolvedThinking && (
+                    <span className="ml-2 text-purple-700 font-semibold">Thinking: {latest.resolvedThinking}</span>
+                  )}
+                </div>
+              )}
+
+              {latest.invalid && (
+                <div className="bg-yellow-50 border border-yellow-300 rounded p-2">
+                  <span className="text-yellow-800">Invalid Jev answer: </span>
+                  <span className="font-mono text-xs">{String(latest.rawSelected)}</span>
+                </div>
+              )}
+
+              {latest.error && (
+                <div className="bg-red-50 border border-red-300 rounded p-2">
+                  <span className="text-red-800">Jev error: </span>
+                  <span className="font-mono text-xs">{latest.error}</span>
+                </div>
+              )}
+
+              {latest.fallbackUsed && (
+                <div className="bg-orange-50 border border-orange-300 rounded p-2">
+                  <span className="text-orange-800">Fallback used: </span>
+                  <span className="font-bold">{latest.fallbackUsed}</span>
+                  <span className="ml-2 text-xs text-gray-600">({latest.fallbackReason})</span>
+                </div>
+              )}
+
               {latest.prompt && (
                 <div className="mt-3">
                   <div className="font-semibold text-gray-700 mb-2">Prompt sent to Jev (state, truncated 3000 chars):</div>
@@ -134,6 +166,9 @@ export default function JevRequestLogCard() {
                   >
                     <span>{new Date(req.timestamp).toLocaleTimeString()}</span>
                     <span className="ml-2">• {req.numModels} models</span>
+                    {req.selectedModel && <span className="ml-2 text-green-700 font-semibold">→ {req.selectedModel}{req.resolvedThinking ? ` (${req.resolvedThinking})` : ""}</span>}
+                    {req.fallbackUsed && <span className="ml-2 text-orange-700 font-semibold">→ fallback: {req.fallbackUsed}</span>}
+                    {req.error && <span className="ml-2 text-red-700 font-semibold">→ error: {req.error}</span>}
                   </div>
                 ))}
               </div>
