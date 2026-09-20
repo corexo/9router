@@ -156,6 +156,7 @@ export async function handleChat(request, clientRawRequest = null) {
       providerFromModelId,
       warn: (message) => log.warn("JEV", message),
       info: (message) => log.info("JEV", `[9Router-Jev] ${message}`),
+      debug: !!process.env.DEBUG_JEV || !!settings.jevDebug,
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
     // routedModel may carry a Jev-picked thinking suffix "model(level)" — strip it before

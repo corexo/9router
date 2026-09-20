@@ -44,8 +44,67 @@ function resolveTimeout(configured) {
 }
 
 // SystemOne takes choices as a criteria map, not an options array.
-function buildCriteria(models) {
+export function buildCriteria(models) {
   return Object.fromEntries(models.map((model) => [model, `Route to ${model}`]));
+}
+
+/**
+ * Build criteria with cost, success rate, and account status for better Jev decisions.
+ * options: { getPricingForModel, getModelHealth, getProviderConnections, getUsageStats }
+ */
+async function buildEnrichedCriteria(models, options = {}) {
+  if (!options.getPricingForModel || !options.getModelHealth) return buildCriteria(models);
+
+  const result = {};
+  const health = await options.getModelHealth?.().catch(() => ({}));
+  const connections = await options.getProviderConnections?.().catch(() => []);
+  const stats = await options.getUsageStats?.().catch(() => ({ byModel: {} }));
+
+  for (const model of models) {
+    const parts = model.split("/");
+    const provider = parts[0];
+    const bareModel = parts[1] || model;
+
+    let desc = model;
+    const healthKey = `${provider}/${bareModel}`;
+    const healthEntry = health[healthKey];
+
+    if (healthEntry?.state === "disabled") {
+      desc = `${model} | Status: DISABLED (${healthEntry.reason})`;
+    } else if (healthEntry?.state === "incompatible") {
+      desc = `${model} | Status: INCOMPATIBLE (schema issue)`;
+    } else {
+      const pricing = options.getPricingForModel?.(provider, bareModel);
+      const costStr = pricing
+        ? `$${(pricing.input / 1000000).toFixed(4)} in/$${(pricing.output / 1000000).toFixed(4)} out`
+        : "Cost: unknown";
+
+      const connForProvider = connections.find((c) => c.provider === provider || c.providerId === provider);
+      let accountStr = "Account: OK";
+      if (connForProvider?.rateLimitedUntil) {
+        const untilMs = new Date(connForProvider.rateLimitedUntil).getTime();
+        const nowMs = Date.now();
+        if (untilMs > nowMs) {
+          const secsLeft = Math.ceil((untilMs - nowMs) / 1000);
+          accountStr = `Account: Rate-limited (${secsLeft}s)`;
+        }
+      }
+
+      const statsKey = `${bareModel} (${provider})`;
+      const modelStats = stats.byModel?.[statsKey];
+      let successStr = "Success: N/A";
+      if (modelStats?.requests) {
+        const successRate = Math.round((modelStats.success || 0) / (modelStats.requests || 1) * 100);
+        successStr = `Success: ${successRate}%`;
+      }
+
+      desc = `${model} | Cost: ${costStr} | ${successStr} | ${accountStr}`;
+    }
+
+    result[model] = desc;
+  }
+
+  return result;
 }
 
 // Response shape is not contractually fixed; accept the documented nestings.
@@ -118,6 +177,15 @@ export async function selectJevModel(body, availableModels, options = {}) {
     fallbackReason: result.fallbackReason,
   });
   try {
+    const criteria = options.enrichCriteria
+      ? await buildEnrichedCriteria(models, options)
+      : buildCriteria(models);
+
+    if (options.debug) {
+      const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ');
+      options.info?.(`[JEV-DEBUG] ${Object.keys(criteria).length} Modelle, Beispiele: ${sample}`);
+    }
+
     const response = await (options.fetch || fetch)(JEV_API_URL, {
       method: "POST",
       headers: {
@@ -131,7 +199,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
           [MODEL_QUESTION_ID]: {
             type: "choice",
             instructions: "Which model should handle this coding-agent request best regarding quality, specialization and latency?",
-            criteria: buildCriteria(models),
+            criteria,
           },
           [THINKING_QUESTION_ID]: {
             type: "choice",

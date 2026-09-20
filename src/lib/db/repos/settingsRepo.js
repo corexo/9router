@@ -56,6 +56,7 @@ const DEFAULT_SETTINGS = {
   jevApiKey: "",
   jevDefaultModel: "",
   jevTimeoutMs: 4500,
+  jevDebug: false,
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,
