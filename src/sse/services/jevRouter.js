@@ -1,4 +1,5 @@
 import { extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
+import { logJevRequest } from "@/lib/jev/requestLog.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
@@ -180,6 +181,8 @@ export async function selectJevModel(body, availableModels, options = {}) {
     const criteria = options.enrichCriteria
       ? await buildEnrichedCriteria(models, options)
       : buildCriteria(models);
+
+    logJevRequest(criteria, models.length);
 
     if (options.debug) {
       const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ');
