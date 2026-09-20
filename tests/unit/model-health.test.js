@@ -27,3 +27,15 @@ describe("classifyModelFailure", () => {
     expect(classifyModelFailure(402, "billing")).toEqual({ type: "unknown", scope: "request" });
   });
 });
+
+describe("classifyModelFailure context overflow", () => {
+  it("classifies Cloudflare 413 code 5021 as request-scoped", () => {
+    const result = classifyModelFailure(413, 'AiError: Ai: The estimated number of input and maximum output tokens (46185) exceeded this model context window limit (32768). code:5021');
+    expect(result).toEqual({ type: "context_limit", scope: "request" });
+  });
+
+  it("never cools a model down for a too-large request", () => {
+    const result = classifyModelFailure(400, "This model maximum context length is 8192 tokens, however you requested 12000");
+    expect(result.scope).toBe("request");
+  });
+});

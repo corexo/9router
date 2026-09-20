@@ -27,6 +27,19 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess } from "@/lib/modelHealth.js";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { estimateQoderPromptTokens } from "open-sse/shared/qoder/contextTier.js";
+import { PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+
+const PROVIDER_ALIAS_TO_ID = Object.fromEntries(
+  Object.entries(PROVIDER_ID_TO_ALIAS || {}).map(([id, alias]) => [alias, id])
+);
+
+// Reverse alias map (ui alias -> canonical provider id) for capability lookups.
+function providerFromModelId(modelId) {
+  const alias = modelId.includes("/") ? modelId.split("/")[0] : modelId;
+  return PROVIDER_ALIAS_TO_ID[alias] || alias;
+}
 
 /**
  * Handle chat completion request
@@ -94,9 +107,23 @@ export async function handleChat(request, clientRawRequest = null) {
     try {
       // skipDynamicFetch: no slow upstream /models discovery per request
       const unavailableModels = await getUnavailableModelIds();
+      // Rough prompt estimate; context-overflow candidates are excluded so Jev
+      // never routes a request to a model whose window is too small (#1957).
+      const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
       availableModels = (await buildModelsList(["llm"], { skipDynamicFetch: true }))
         .map((model) => model.id)
-        .filter((modelId) => !unavailableModels.has(modelId));
+        .filter((modelId) => !unavailableModels.has(modelId))
+        .filter((modelId) => {
+          if (modelId === "jev" || modelId === "nineRouter/jev") return true;
+          const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
+          const window = Number(caps?.contextWindow) || 0;
+          // Unknown window: keep candidate (Jev may still pick it); only exclude
+          // models that are known to be too small.
+          return window <= 0 || window >= estimatedTokens + 1000;
+        });
+      if (estimatedTokens > 0 && availableModels.length > 0) {
+        log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length} Modelle passen`);
+      }
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
     }

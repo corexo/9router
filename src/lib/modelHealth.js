@@ -15,7 +15,15 @@ export function classifyModelFailure(status, message = "") {
   if (text.includes("model_not_supported") || text.includes("model not supported") || text.includes("model not found") || text.includes("does not exist")) {
     return { type: "unsupported", scope: "permanent" };
   }
-  if (text.includes("token count") && (text.includes("exceeds") || text.includes("limit"))) {
+  // Context overflow (incl. Cloudflare 413 / code 5021): blame the request, not the
+  // model — it works fine for smaller payloads, so never cool it down globally.
+  if (
+    status === 413 ||
+    text.includes("context window limit") ||
+    text.includes("context length") ||
+    text.includes("too many tokens") ||
+    (text.includes("token") && (text.includes("exceed") || text.includes("exceeds")))
+  ) {
     return { type: "context_limit", scope: "request" };
   }
   if (text.includes("bad input") || text.includes("oneof") || text.includes("type mismatch") || text.includes("'prompt'")) {
