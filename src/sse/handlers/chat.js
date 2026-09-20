@@ -115,9 +115,18 @@ export async function handleChat(request, clientRawRequest = null) {
       // only, never Jev's own decision.
       // skipDynamicFetch: no slow upstream /models discovery per request
       const jevCombo = await getComboModels("jev");
-      const pool = Array.isArray(jevCombo) && jevCombo.length > 0
+      const activeIds = new Set((await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id));
+      let pool = Array.isArray(jevCombo) && jevCombo.length > 0
         ? jevCombo.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId))
-        : (await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id);
+        : [...activeIds];
+      // A combo may list models whose provider has no active credentials
+      // (e.g. gh/* without a GitHub connection). Jev must never see those:
+      // intersect with the active list; keep the raw combo only if the
+      // intersection is empty so a registry hiccup cannot empty the pool.
+      if (pool.length > 0 && activeIds.size > 0) {
+        const intersected = pool.filter((modelId) => activeIds.has(modelId));
+        if (intersected.length > 0) pool = intersected;
+      }
       // Rough prompt estimate; context-overflow candidates are excluded so Jev
       // never routes a request to a model whose window is too small (#1957).
       const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
