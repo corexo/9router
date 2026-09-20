@@ -70,6 +70,13 @@ export async function PATCH(request) {
       delete body.currentPassword;
     }
 
+    // Empty string means "keep stored key"; only an explicit null clears it.
+    if (Object.prototype.hasOwnProperty.call(body, "jevApiKey")) {
+      if (body.jevApiKey === null) body.jevApiKey = "";
+      else if (!String(body.jevApiKey).trim()) delete body.jevApiKey;
+      else body.jevApiKey = String(body.jevApiKey).trim();
+    }
+
     if (Object.prototype.hasOwnProperty.call(body, "oidcClientSecret")) {
       if (!body.oidcClientSecret || !String(body.oidcClientSecret).trim()) {
         delete body.oidcClientSecret;
@@ -108,8 +115,9 @@ export async function PATCH(request) {
         .catch((error) => console.warn("[AutoPing] settings update failed:", error.message));
     }
 
-    const { password, oidcClientSecret, ...safeSettings } = settings;
+    const { password, oidcClientSecret, jevApiKey, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
+    safeSettings.jevConfigured = !!jevApiKey;
     return NextResponse.json(safeSettings, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);

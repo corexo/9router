@@ -540,6 +540,12 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
   }
 
+  // Virtual Jev router model: advertised for clients/model pickers, resolved before provider routing.
+  if (kindFilter.includes(LLM_KIND)) {
+    models.unshift({ id: "jev", object: "model", owned_by: "9router" });
+    models.unshift({ id: "nineRouter/jev", object: "model", owned_by: "9router" });
+  }
+
   const dedupedModels = [];
   const seenModelIds = new Set();
   for (const model of models) {

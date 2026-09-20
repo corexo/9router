@@ -243,7 +243,7 @@ export async function saveRequestUsage(entry) {
     const db = await getAdapter();
 
     if (!entry.timestamp) entry.timestamp = new Date().toISOString();
-    entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
+    entry.cost = entry.cost ?? await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
@@ -768,5 +768,37 @@ export async function getRecentLogs(limit = 200) {
   } catch (e) {
     console.error("[usageRepo] getRecentLogs failed:", e.message);
     return [];
+  }
+}
+
+export async function getJevStats(period = "7d") {
+  try {
+    const db = await getAdapter();
+    const days = { today: 1, "24h": 1, "7d": 7, "30d": 30, "60d": 60 }[period] || 7;
+    const since = new Date(Date.now() - days * 86400000).toISOString();
+    const rows = db.all(
+      `SELECT timestamp, endpoint, cost, status, meta FROM usageHistory WHERE provider = 'jev' AND timestamp >= ? ORDER BY id ASC`,
+      [since]
+    );
+    const stats = { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, latencySumMs: 0, latencyCount: 0, callers: {}, choices: {} };
+    for (const row of rows) {
+      const meta = parseJson(row.meta, {}) || {};
+      stats.requests += 1;
+      if (row.status === "success") stats.success += 1;
+      else stats.fallbacks += 1;
+      stats.credits += Number(row.cost) || 0;
+      const total = Number(meta.tokens ?? 0);
+      stats.tokens += total;
+      if (typeof meta.latencyMs === "number") { stats.latencySumMs += meta.latencyMs; stats.latencyCount += 1; }
+      if (meta.caller) stats.callers[meta.caller] = (stats.callers[meta.caller] || 0) + 1;
+      if (meta.choice) stats.choices[meta.choice] = (stats.choices[meta.choice] || 0) + 1;
+    }
+    stats.avgLatencyMs = stats.latencyCount ? Math.round(stats.latencySumMs / stats.latencyCount) : 0;
+    stats.successRate = stats.requests ? Math.round((stats.success / stats.requests) * 100) : 100;
+    stats.topChoices = Object.entries(stats.choices).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([model, count]) => ({ model, count }));
+    return stats;
+  } catch (e) {
+    console.error("[usageRepo] getJevStats failed:", e.message);
+    return { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, avgLatencyMs: 0, successRate: 100, callers: {}, choices: {}, topChoices: [] };
   }
 }

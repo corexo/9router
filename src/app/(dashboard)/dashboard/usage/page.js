@@ -7,6 +7,7 @@ import RequestDetailsTab from "./components/RequestDetailsTab";
 import ProviderLimits from "./components/ProviderLimits";
 import ActiveQuotas from "./components/ActiveQuotas";
 import PeakHoursBanner from "./components/PeakHoursBanner";
+import JevStatsCard from "./components/JevStatsCard";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -88,6 +89,7 @@ function UsageContent() {
       {activeTab === "overview" && (
         <Suspense fallback={<CardSkeleton />}>
           <UsageStats mode="overview" widgets={widgets} />
+          <JevStatsCard period={period} />
           {widgets.activeQuotas !== false && (
             <div className="mt-6">
               <ActiveQuotas />

@@ -80,6 +80,9 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+  const [jevForm, setJevForm] = useState({ apiKey: "", defaultModel: "", timeoutMs: 1200 });
+  const [jevStatus, setJevStatus] = useState({ type: "", message: "" });
+  const [jevLoading, setJevLoading] = useState(false);
 
   const [isRemoteHost, setIsRemoteHost] = useState(false);
   useEffect(() => {
@@ -121,6 +124,11 @@ export default function ProfilePage() {
           outboundProxyEnabled: data?.outboundProxyEnabled === true,
           outboundProxyUrl: data?.outboundProxyUrl || "",
           outboundNoProxy: data?.outboundNoProxy || "",
+        });
+        setJevForm({
+          apiKey: "",
+          defaultModel: data?.jevDefaultModel || "",
+          timeoutMs: data?.jevTimeoutMs || 1200,
         });
         setLoading(false);
       })
@@ -224,6 +232,32 @@ export default function ProfilePage() {
       setProxyStatus({ type: "error", message: "An error occurred" });
     } finally {
       setProxyLoading(false);
+    }
+  };
+
+  const updateJevSettings = async (e) => {
+    e.preventDefault();
+    setJevLoading(true);
+    setJevStatus({ type: "", message: "" });
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jevApiKey: jevForm.apiKey,
+          jevDefaultModel: jevForm.defaultModel.trim(),
+          jevTimeoutMs: Math.max(1, Number(jevForm.timeoutMs) || 1200),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Jev settings could not be saved");
+      setSettings((prev) => ({ ...prev, ...data }));
+      setJevForm((prev) => ({ ...prev, apiKey: "" }));
+      setJevStatus({ type: "success", message: "Jev settings saved" });
+    } catch (error) {
+      setJevStatus({ type: "error", message: error.message });
+    } finally {
+      setJevLoading(false);
     }
   };
 
@@ -1596,6 +1630,63 @@ export default function ProfilePage() {
               </p>
             )}
           </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-violet-500/10 text-violet-500 shrink-0">
+              <span className="material-symbols-outlined text-[20px]">route</span>
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-semibold">Jev AI Routing</h3>
+              <p className="text-xs sm:text-sm text-text-muted">
+                {settings.jevConfigured ? "API key configured" : "API key not configured"}
+              </p>
+            </div>
+          </div>
+          <form onSubmit={updateJevSettings} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <label className="font-medium text-sm sm:text-base">TypeSafe API Key</label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                placeholder={settings.jevConfigured ? "Stored — enter only to replace" : "Enter API key"}
+                value={jevForm.apiKey}
+                onChange={(e) => setJevForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                disabled={loading || jevLoading}
+              />
+              <p className="text-xs sm:text-sm text-text-muted">Stored server-side. Existing value is never returned to browser.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="font-medium text-sm sm:text-base">Fallback model</label>
+                <Input
+                  placeholder="anthropic/claude-sonnet-4-5"
+                  value={jevForm.defaultModel}
+                  onChange={(e) => setJevForm((prev) => ({ ...prev, defaultModel: e.target.value }))}
+                  disabled={loading || jevLoading}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="font-medium text-sm sm:text-base">Timeout (ms)</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={jevForm.timeoutMs}
+                  onChange={(e) => setJevForm((prev) => ({ ...prev, timeoutMs: e.target.value }))}
+                  disabled={loading || jevLoading}
+                />
+              </div>
+            </div>
+            <Button type="submit" variant="primary" loading={jevLoading} className="w-full sm:w-auto self-start">
+              Save Jev settings
+            </Button>
+            {jevStatus.message && (
+              <p className={`text-xs sm:text-sm ${jevStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                {jevStatus.message}
+              </p>
+            )}
+          </form>
         </Card>
 
         {/* Observability Settings */}

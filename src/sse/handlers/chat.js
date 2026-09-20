@@ -24,6 +24,8 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
+import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
 
 /**
  * Handle chat completion request
@@ -85,26 +87,51 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
+  let routedModel = modelStr;
+  if (JEV_MODEL_ALIASES.has(modelStr)) {
+    let availableModels = [];
+    try {
+      // skipDynamicFetch: no slow upstream /models discovery per request
+      availableModels = (await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id);
+    } catch (error) {
+      log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
+    }
+    routedModel = await selectJevModel(body, availableModels, {
+      apiKey: settings.jevApiKey,
+      defaultModel: settings.jevDefaultModel,
+      timeoutMs: settings.jevTimeoutMs,
+      warn: (message) => log.warn("JEV", message),
+    });
+    // Fallback default must be resolvable (provider/model or combo); else first available
+    const routedInfo = await getModelInfo(routedModel);
+    if (!routedInfo.provider && !(await getComboModels(routedModel)) && availableModels.length > 0) {
+      log.warn("JEV", `[9Router-Jev] [WARN] Fallback '${routedModel}' nicht auflösbar -> Fallback: ${availableModels[0]}`);
+      routedModel = availableModels[0];
+    }
+    body.model = routedModel;
+    if (clientRawRequest?.body) clientRawRequest.body.model = routedModel;
+  }
+
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
-  const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
+  const bypassResponse = handleBypassRequest(body, routedModel, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
   // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
+  const comboModels = await getComboModels(routedModel);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
-    const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
+    const comboSpecificStrategy = comboStrategies[routedModel]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, modelStr));
+    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, routedModel));
     const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, settings);
     const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
     if (comboStrategy === "fusion") {
-      log.info("CHAT", `Combo "${modelStr}" with ${peakModels.length} models (strategy: fusion)`);
+      log.info("CHAT", `Combo "${routedModel}" with ${peakModels.length} models (strategy: fusion)`);
       return handleFusionChat({
         body,
         models: peakModels,
@@ -117,14 +144,14 @@ export async function handleChat(request, clientRawRequest = null) {
           return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
         },
         log,
-        comboName: modelStr,
-        judgeModel: comboStrategies[modelStr]?.judgeModel,
-        tuning: comboStrategies[modelStr]?.fusionTuning,
+        comboName: routedModel,
+        judgeModel: comboStrategies[routedModel]?.judgeModel,
+        tuning: comboStrategies[routedModel]?.fusionTuning,
       });
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    log.info("CHAT", `Combo "${routedModel}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,
       models: augmentedModels,
@@ -133,7 +160,7 @@ export async function handleChat(request, clientRawRequest = null) {
         adapterAdded
       ),
       log,
-      comboName: modelStr,
+      comboName: routedModel,
       comboStrategy,
       comboStickyLimit
     });
@@ -141,10 +168,10 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Single model request — may still switch to a capacity-adapter model if the
   // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const soloAugmented = augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
+  const soloAugmented = augmentModelsWithCapacityAdapter([routedModel], requiredCapabilities, settings);
   if (soloAugmented.length > 1) {
-    const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
-    log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
+    const adapterAdded = soloAugmented.filter((m) => m !== routedModel);
+    log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${routedModel}" → trying ${soloAugmented.join(", ")}`);
     return handleComboChat({
       body,
       models: soloAugmented,
@@ -153,12 +180,12 @@ export async function handleChat(request, clientRawRequest = null) {
         adapterAdded
       ),
       log,
-      comboName: modelStr,
+      comboName: routedModel,
       comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
+  return handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey);
 }
 
 /**
