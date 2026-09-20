@@ -368,8 +368,14 @@ export function matchPattern(pattern, model) {
  * @param {string} model
  * @returns {object|null}
  */
+// Providers billed as flat-rate subscription or fully self-hosted — never
+// metered per-token, so model-name pricing tables (which have no provider
+// scoping in steps 2/3 below) must never apply to them.
+const NO_PRICING_PROVIDERS = new Set(["ollama", "ollama-local"]);
+
 export function getPricingForModel(provider, model) {
   if (!model) return null;
+  if (NO_PRICING_PROVIDERS.has(provider)) return null;
 
   // 1. Provider-specific override
   if (provider && PROVIDER_PRICING[provider]?.[model]) {
