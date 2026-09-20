@@ -38,6 +38,9 @@ const PROVIDER_ALIAS_TO_ID = Object.fromEntries(
 // Reverse alias map (ui alias -> canonical provider id) for capability lookups.
 function providerFromModelId(modelId) {
   const alias = modelId.includes("/") ? modelId.split("/")[0] : modelId;
+  // Registry providers may expose multiple aliases. PROVIDER_ID_TO_ALIAS only
+  // carries the primary one; Workers AI clients commonly use the secondary `cf`.
+  if (alias === "cf") return "cloudflare-ai";
   return PROVIDER_ALIAS_TO_ID[alias] || alias;
 }
 
