@@ -28,6 +28,8 @@ import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess } from "@/lib/modelHealth.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
+import { stripThinkingSuffix } from "open-sse/translator/concerns/thinkingUnified.js";
 import { estimateQoderPromptTokens } from "open-sse/shared/qoder/contextTier.js";
 import { PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 
@@ -150,12 +152,16 @@ export async function handleChat(request, clientRawRequest = null) {
       apiKey: settings.jevApiKey,
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
+      getThinkingLevels,
+      providerFromModelId,
       warn: (message) => log.warn("JEV", message),
       info: (message) => log.info("JEV", `[9Router-Jev] ${message}`),
     });
-    // Fallback default must be resolvable (provider/model or combo); else first available
-    const routedInfo = await getModelInfo(routedModel);
-    if (!routedInfo.provider && !(await getComboModels(routedModel)) && availableModels.length > 0) {
+    // Fallback default must be resolvable (provider/model or combo); else first available.
+    // routedModel may carry a Jev-picked thinking suffix "model(level)" — strip it before
+    // resolving, since getModelInfo/capabilities lookups operate on the bare model id.
+    const routedInfo = await getModelInfo(stripThinkingSuffix(routedModel));
+    if (!routedInfo.provider && !(await getComboModels(stripThinkingSuffix(routedModel))) && availableModels.length > 0) {
       log.warn("JEV", `[9Router-Jev] [WARN] Fallback '${routedModel}' nicht auflösbar -> Fallback: ${availableModels[0]}`);
       routedModel = availableModels[0];
     }

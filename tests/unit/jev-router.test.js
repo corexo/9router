@@ -69,4 +69,58 @@ describe("Jev router", () => {
     const fetch = async () => ({ ok: true, json: async () => ({ results: { target_model: { selected: "unknown" } } }) });
     expect(await selectJevModel({}, ["openai/gpt-4o"], { fetch, warn: vi.fn() })).toBe("openai/gpt-4o");
   });
+
+  it("sends a thinking question alongside the model question", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" }, target_thinking: { selected: "high" } } }),
+    }));
+    await selectJevModel({}, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock });
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent.questions.target_thinking.type).toBe("choice");
+    expect(Object.keys(sent.questions.target_thinking.criteria)).toEqual(["none", "low", "medium", "high", "xhigh"]);
+  });
+
+  it("appends a thinking suffix when the chosen model supports the exact level", async () => {
+    const fetchMock = async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "anthropic/claude-opus" }, target_thinking: { selected: "high" } } }),
+    });
+    const getThinkingLevels = vi.fn(() => ["low", "medium", "high", "xhigh"]);
+    const selected = await selectJevModel({}, ["anthropic/claude-opus"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
+    expect(selected).toBe("anthropic/claude-opus(high)");
+    expect(getThinkingLevels).toHaveBeenCalledWith("anthropic", "claude-opus");
+  });
+
+  it("clamps to the nearest supported level when the exact one is unavailable", async () => {
+    const fetchMock = async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "codebuddy-cn/glm-5.3" }, target_thinking: { selected: "medium" } } }),
+    });
+    // glm-5.3 pattern override only supports low|high|max
+    const getThinkingLevels = () => ["low", "high", "max"];
+    const selected = await selectJevModel({}, ["codebuddy-cn/glm-5.3"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
+    expect(selected).toBe("codebuddy-cn/glm-5.3(low)");
+  });
+
+  it("omits the suffix when the chosen model has no reasoning capability at all", async () => {
+    const fetchMock = async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" }, target_thinking: { selected: "high" } } }),
+    });
+    const getThinkingLevels = () => null; // model.reasoning === false
+    const selected = await selectJevModel({}, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
+    expect(selected).toBe("openai/gpt-4o");
+  });
+
+  it("omits the suffix for a combo selection (no slash) even if Jev proposed a level", async () => {
+    const fetchMock = async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "Sonnet" }, target_thinking: { selected: "high" } } }),
+    });
+    const getThinkingLevels = vi.fn();
+    const selected = await selectJevModel({}, ["Sonnet"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
+    expect(selected).toBe("Sonnet");
+    expect(getThinkingLevels).not.toHaveBeenCalled();
+  });
 });

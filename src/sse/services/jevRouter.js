@@ -1,9 +1,20 @@
 import { extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
-const QUESTION_ID = "target_model";
+const MODEL_QUESTION_ID = "target_model";
+const THINKING_QUESTION_ID = "target_thinking";
 const JEV_MODEL = "jev-1.13.0";
 const DEFAULT_TIMEOUT_MS = 4500;
 const MAX_PROMPT_LENGTH = 3000;
+// Generic scale offered to Jev before we know which model it will pick;
+// resolveThinkingSuffix() below clamps the answer to what the chosen model actually supports.
+const GENERIC_THINKING_LEVELS = ["none", "low", "medium", "high", "xhigh"];
+const THINKING_CRITERIA = {
+  none: "Trivial request — no reasoning needed, fastest/cheapest response.",
+  low: "Simple, well-defined task with little ambiguity.",
+  medium: "Moderate complexity, some multi-step reasoning.",
+  high: "Hard problem: non-trivial debugging, architecture, multi-file reasoning.",
+  xhigh: "Very hard problem: deep multi-step reasoning, security-critical or high-stakes correctness.",
+};
 
 export const JEV_MODEL_ALIASES = new Set(["jev", "nineRouter/jev"]);
 
@@ -38,16 +49,46 @@ function buildCriteria(models) {
 }
 
 // Response shape is not contractually fixed; accept the documented nestings.
-function pickAnswer(data) {
-  const node = data?.results?.[QUESTION_ID] ?? data?.answers?.[QUESTION_ID] ?? data?.[QUESTION_ID];
+function pickAnswer(data, questionId) {
+  const node = data?.results?.[questionId] ?? data?.answers?.[questionId] ?? data?.[questionId];
   const value = typeof node === "object" && node !== null
     ? (node.choice ?? node.selected ?? node.answer ?? node.value)
     : node;
   return typeof value === "string" ? value.trim() : undefined;
 }
 
+// Clamp Jev's generic thinking answer to what the chosen model actually supports.
+// getThinkingLevels: injectable so tests don't need the real capabilities registry.
+function resolveThinkingSuffix(rawLevel, chosenModel, options) {
+  if (!rawLevel) return "";
+  const level = String(rawLevel).trim().toLowerCase();
+  if (!GENERIC_THINKING_LEVELS.includes(level)) return "";
+
+  const getLevels = options.getThinkingLevels;
+  if (typeof getLevels !== "function") return "";
+
+  const provider = options.providerFromModelId?.(chosenModel) ?? chosenModel.split("/")[0];
+  const bareModel = chosenModel.includes("/") ? chosenModel.slice(chosenModel.indexOf("/") + 1) : chosenModel;
+  const supported = getLevels(provider, bareModel);
+  if (!Array.isArray(supported) || supported.length === 0) return ""; // model has no reasoning capability at all
+
+  if (supported.includes(level)) return `(${level})`;
+  if (level === "none") return ""; // model can't disable thinking anyway — leave provider default
+
+  // Clamp to nearest supported level on the shared low->high scale.
+  const scale = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const wanted = scale.indexOf(level);
+  const ranked = supported
+    .map((l) => ({ l, d: Math.abs(scale.indexOf(l) - wanted) }))
+    .filter((entry) => entry.d >= 0)
+    .sort((a, b) => a.d - b.d);
+  return ranked[0] ? `(${ranked[0].l})` : "";
+}
+
 /**
- * options: { apiKey, defaultModel, timeoutMs } — UI settings win, env is the fallback.
+ * options: { apiKey, defaultModel, timeoutMs, getThinkingLevels, providerFromModelId } —
+ * UI settings win, env is the fallback. getThinkingLevels/providerFromModelId are injected
+ * by the caller (real capabilities registry in production, mocks in tests).
  */
 export async function selectJevModel(body, availableModels, options = {}) {
   const models = [...new Set(availableModels)].filter((model) => !JEV_MODEL_ALIASES.has(model));
@@ -87,10 +128,15 @@ export async function selectJevModel(body, availableModels, options = {}) {
         state: extractJevPrompt(body),
         model: JEV_MODEL,
         questions: {
-          [QUESTION_ID]: {
+          [MODEL_QUESTION_ID]: {
             type: "choice",
             instructions: "Which model should handle this coding-agent request best regarding quality, specialization and latency?",
             criteria: buildCriteria(models),
+          },
+          [THINKING_QUESTION_ID]: {
+            type: "choice",
+            instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities — the router clamps this to what the chosen model actually supports.",
+            criteria: THINKING_CRITERIA,
           },
         },
       }),
@@ -102,13 +148,19 @@ export async function selectJevModel(body, availableModels, options = {}) {
     }
 
     const data = await response.json();
-    const selected = pickAnswer(data);
+    const selected = pickAnswer(data, MODEL_QUESTION_ID);
+    const rawThinking = pickAnswer(data, THINKING_QUESTION_ID);
     logUsage({ status: "success", httpStatus: response.status, tokens: extractJevTokens(data), choice: typeof selected === "string" ? selected : undefined });
-    options.info?.(`Jev wählte '${selected}'`);
     if (typeof selected !== "string" || !models.includes(selected)) {
+      options.info?.(`Jev wählte ungültig '${selected}'`);
       return fail(`Ungültige Jev-Auswahl '${selected}'`);
     }
-    return selected;
+
+    // Combo names never contain "/"; a thinking suffix only makes sense on a concrete
+    // provider/model target, not on a combo (which resolves to many different models).
+    const suffix = selected.includes("/") ? resolveThinkingSuffix(rawThinking, selected, options) : "";
+    options.info?.(`Jev wählte '${selected}'${suffix ? ` Thinking='${suffix.slice(1, -1)}'` : ""}${rawThinking && !suffix ? ` (angefragt '${rawThinking}', nicht anwendbar)` : ""}`);
+    return `${selected}${suffix}`;
   } catch (error) {
     logUsage({ status: "error", fallbackReason: error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}` });
     return fail(error?.name === "AbortError" ? "Jev API Timeout" : `Jev API Fehler: ${error?.message || error}`);
