@@ -1,4 +1,4 @@
-import { extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
+import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest } from "@/lib/jev/requestLog.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
@@ -106,6 +106,14 @@ async function buildEnrichedCriteria(models, options = {}) {
 }
 
 // Response shape is not contractually fixed; accept the documented nestings.
+function safeParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 function pickAnswer(data, questionId) {
   const node = data?.results?.[questionId] ?? data?.answers?.[questionId] ?? data?.[questionId];
   const value = typeof node === "object" && node !== null
@@ -170,7 +178,8 @@ export async function selectJevModel(body, availableModels, options = {}) {
     status: result.status,
     httpStatus: result.httpStatus,
     latencyMs: Date.now() - jevStarted,
-    tokens: result.tokens || 0,
+    promptTokens: result.promptTokens || 0,
+    completionTokens: result.completionTokens || 0,
     choice: result.choice,
     fallbackReason: result.fallbackReason,
   });
@@ -191,39 +200,53 @@ export async function selectJevModel(body, availableModels, options = {}) {
       options.info?.(`[JEV-DEBUG] ${Object.keys(criteria).length} Modelle, Beispiele: ${sample}`);
     }
 
+    const requestBody = JSON.stringify({
+      state: extractJevPrompt(body),
+      model: JEV_MODEL,
+      questions: {
+        [MODEL_QUESTION_ID]: {
+          type: "choice",
+          instructions: "Which model should handle this coding-agent request best regarding quality, specialization and latency?",
+          criteria,
+        },
+        [THINKING_QUESTION_ID]: {
+          type: "choice",
+          instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities — the router clamps this to what the chosen model actually supports.",
+          criteria: THINKING_CRITERIA,
+        },
+      },
+    });
     const response = await (options.fetch || fetch)(JEV_API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        state: extractJevPrompt(body),
-        model: JEV_MODEL,
-        questions: {
-          [MODEL_QUESTION_ID]: {
-            type: "choice",
-            instructions: "Which model should handle this coding-agent request best regarding quality, specialization and latency?",
-            criteria,
-          },
-          [THINKING_QUESTION_ID]: {
-            type: "choice",
-            instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities — the router clamps this to what the chosen model actually supports.",
-            criteria: THINKING_CRITERIA,
-          },
-        },
-      }),
+      body: requestBody,
       signal: controller.signal,
     });
     if (!response.ok) {
-      logUsage({ status: "error", httpStatus: response.status, fallbackReason: `HTTP ${response.status}` });
+      logUsage({ status: "error", httpStatus: response.status, promptTokens: estimateTextTokens(requestBody), fallbackReason: `HTTP ${response.status}` });
       return fail(`Jev API HTTP ${response.status}`);
     }
 
-    const data = await response.json();
+    // response.text() may be unavailable on lightweight test doubles that only
+    // implement .json(); fall back to re-stringifying the parsed body for those.
+    const rawText = typeof response.text === "function" ? await response.text() : JSON.stringify(await response.json());
+    const data = safeParseJson(rawText);
     const selected = pickAnswer(data, MODEL_QUESTION_ID);
     const rawThinking = pickAnswer(data, THINKING_QUESTION_ID);
-    logUsage({ status: "success", httpStatus: response.status, tokens: extractJevTokens(data), choice: typeof selected === "string" ? selected : undefined });
+    // Jev's SystemOne API never returns a usage field (extractJevTokens is a real-usage
+    // fast path, currently always 0); fall back to estimating from actual payload sizes
+    // so the dashboard shows non-zero, roughly-accurate in/out token counts.
+    const realTokens = extractJevTokens(data);
+    logUsage({
+      status: "success",
+      httpStatus: response.status,
+      promptTokens: realTokens || estimateTextTokens(requestBody),
+      completionTokens: realTokens ? 0 : estimateTextTokens(rawText),
+      choice: typeof selected === "string" ? selected : undefined,
+    });
     if (typeof selected !== "string" || !models.includes(selected)) {
       options.info?.(`Jev wählte ungültig '${selected}'`);
       return fail(`Ungültige Jev-Auswahl '${selected}'`);

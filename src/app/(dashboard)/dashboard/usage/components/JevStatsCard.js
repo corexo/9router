@@ -26,7 +26,8 @@ export default function JevStatsCard({ period = "7d" }) {
     { label: "Success", value: `${stats.successRate}%` },
     { label: "Fallbacks", value: stats.fallbacks },
     { label: "Credits", value: stats.credits.toFixed(6) },
-    { label: "Tokens", value: stats.tokens.toLocaleString() },
+    { label: "Tokens in", value: (stats.promptTokens ?? 0).toLocaleString() },
+    { label: "Tokens out", value: (stats.completionTokens ?? 0).toLocaleString() },
     { label: "Avg latency", value: `${stats.avgLatencyMs} ms` },
   ];
 

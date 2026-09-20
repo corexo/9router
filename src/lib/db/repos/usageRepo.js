@@ -284,7 +284,7 @@ export async function saveRequestUsage(entry) {
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          stringifyJson(tokens), stringifyJson(entry.meta || {}),
         ]
       );
 
@@ -809,7 +809,7 @@ export async function getJevStats(period = "7d") {
       `SELECT timestamp, endpoint, cost, status, meta FROM usageHistory WHERE provider = 'jev' AND timestamp >= ? ORDER BY id ASC`,
       [since]
     );
-    const stats = { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, latencySumMs: 0, latencyCount: 0, callers: {}, choices: {} };
+    const stats = { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, promptTokens: 0, completionTokens: 0, latencySumMs: 0, latencyCount: 0, callers: {}, choices: {} };
     for (const row of rows) {
       const meta = parseJson(row.meta, {}) || {};
       stats.requests += 1;
@@ -818,6 +818,8 @@ export async function getJevStats(period = "7d") {
       stats.credits += Number(row.cost) || 0;
       const total = Number(meta.tokens ?? 0);
       stats.tokens += total;
+      stats.promptTokens += Number(meta.promptTokens ?? 0);
+      stats.completionTokens += Number(meta.completionTokens ?? 0);
       if (typeof meta.latencyMs === "number") { stats.latencySumMs += meta.latencyMs; stats.latencyCount += 1; }
       if (meta.caller) stats.callers[meta.caller] = (stats.callers[meta.caller] || 0) + 1;
       if (meta.choice) stats.choices[meta.choice] = (stats.choices[meta.choice] || 0) + 1;

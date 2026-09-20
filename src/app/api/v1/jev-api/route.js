@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { JEV_API_URL, JEV_MODEL, extractTokens, getJevApiKey, recordJevUsage } from "@/lib/jev/client.js";
+import { JEV_API_URL, JEV_MODEL, estimateTextTokens, extractTokens, getJevApiKey, recordJevUsage } from "@/lib/jev/client.js";
 import { getSettings } from "@/lib/db/repos/settingsRepo.js";
 
 // Proxy calls carry full diffs and free-form questions, so they need more room
@@ -42,18 +42,23 @@ export async function POST(request) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
+  const requestBody = JSON.stringify({ ...body, model: body.model || JEV_MODEL, caller: undefined });
 
   try {
     const upstream = await fetch(JEV_API_URL, {
       method: "POST",
       signal: controller.signal,
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, model: body.model || JEV_MODEL, caller: undefined }),
+      body: requestBody,
     });
 
     const text = await upstream.text();
     const data = safeParse(text);
     const latencyMs = Date.now() - started;
+    // Jev's SystemOne API never returns a usage field, so extractTokens is a real-usage
+    // fast path (currently always 0) with an estimated char-length fallback so the
+    // dashboard shows non-zero, roughly-accurate in/out token counts.
+    const realTokens = extractTokens(data);
 
     recordJevUsage({
       endpoint: "/v1/jev-api",
@@ -62,7 +67,8 @@ export async function POST(request) {
       status: upstream.ok ? "success" : "error",
       httpStatus: upstream.status,
       latencyMs,
-      tokens: extractTokens(data),
+      promptTokens: realTokens || estimateTextTokens(requestBody),
+      completionTokens: realTokens ? 0 : estimateTextTokens(text),
       choice: firstAnswer(data),
       fallbackReason: upstream.ok ? undefined : `HTTP ${upstream.status}`,
     });
@@ -79,7 +85,7 @@ export async function POST(request) {
       questionType,
       status: "error",
       latencyMs: Date.now() - started,
-      tokens: 0,
+      promptTokens: estimateTextTokens(requestBody),
       fallbackReason: aborted ? "timeout" : `network: ${error?.message || error}`,
     });
     return NextResponse.json({ error: aborted ? "Jev API timeout" : "Jev API unreachable" }, { status: 504 });
