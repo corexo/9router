@@ -506,7 +506,7 @@ function PeakHoursConfig({ peak, onChange, combos = [], comboStrategies = {}, on
           <p className="px-1 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-text-muted">
             Per combo
           </p>
-          {combos.map((combo) => (
+          {combos.filter((combo) => combo.kind !== "builtin").map((combo) => (
             <ComboPeakRow
               key={combo.id}
               combo={combo}
@@ -588,15 +588,22 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
 
         {/* Actions */}
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
-          {/* Strategy selector — always visible */}
-          <div className="w-full sm:w-[200px]">
-            <Select
-              options={STRATEGY_OPTIONS}
-              value={current}
-              onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
-              selectClassName="py-1.5 text-xs"
-            />
-          </div>
+          {/* Strategy selector — Jev decides per request, so built-in combos have no strategy */}
+          {combo.kind === "builtin" ? (
+            <span className="flex w-full items-center gap-1.5 rounded border border-dashed border-primary/30 px-2 py-1.5 text-xs text-primary sm:w-[200px]" title="Jev AI picks the model per request - no fallback strategy needed">
+              <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+              <span className="truncate">Jev decides</span>
+            </span>
+          ) : (
+            <div className="w-full sm:w-[200px]">
+              <Select
+                options={STRATEGY_OPTIONS}
+                value={current}
+                onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
+                selectClassName="py-1.5 text-xs"
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-1 sm:flex">
             <button
