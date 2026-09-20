@@ -108,13 +108,20 @@ export async function handleChat(request, clientRawRequest = null) {
   if (JEV_MODEL_ALIASES.has(modelStr)) {
     let availableModels = [];
     try {
-      // skipDynamicFetch: no slow upstream /models discovery per request
       const unavailableModels = await getUnavailableModelIds();
+      // A combo named "jev" narrows the candidate pool to exactly its models;
+      // without one, every active LLM stays a candidate. The pool is deliberately
+      // NOT peak-hour filtered: Claude peak hours shape normal combo rotation
+      // only, never Jev's own decision.
+      // skipDynamicFetch: no slow upstream /models discovery per request
+      const jevCombo = await getComboModels("jev");
+      const pool = Array.isArray(jevCombo) && jevCombo.length > 0
+        ? jevCombo.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId))
+        : (await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id);
       // Rough prompt estimate; context-overflow candidates are excluded so Jev
       // never routes a request to a model whose window is too small (#1957).
       const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
-      availableModels = (await buildModelsList(["llm"], { skipDynamicFetch: true }))
-        .map((model) => model.id)
+      availableModels = pool
         .filter((modelId) => !unavailableModels.has(modelId))
         .filter((modelId) => {
           if (modelId === "jev" || modelId === "nineRouter/jev") return true;
@@ -125,7 +132,7 @@ export async function handleChat(request, clientRawRequest = null) {
           return window <= 0 || window >= estimatedTokens + 1000;
         });
       if (estimatedTokens > 0 && availableModels.length > 0) {
-        log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length} Modelle passen`);
+        log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${jevCombo ? " (Combo 'jev')" : ""}`);
       }
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
