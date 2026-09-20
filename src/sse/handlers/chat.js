@@ -148,6 +148,7 @@ export async function handleChat(request, clientRawRequest = null) {
       if (estimatedTokens > 0 && availableModels.length > 0) {
         log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${jevCombo ? " (Combo 'jev')" : ""}`);
       }
+      log.info("JEV", `[9Router-Jev] [DEBUG-POOL] Voller Pool (${availableModels.length}): ${availableModels.join(", ")}`);
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
     }
