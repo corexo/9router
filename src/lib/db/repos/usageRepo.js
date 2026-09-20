@@ -771,6 +771,35 @@ export async function getRecentLogs(limit = 200) {
   }
 }
 
+function buildJevSeries(rows, days) {
+  const buckets = new Map();
+  for (let i = days - 1; i >= 0; i--) {
+    const key = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    buckets.set(key, { date: key, requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, latencySum: 0, latencyCount: 0 });
+  }
+  for (const row of rows) {
+    const key = String(row.timestamp).slice(0, 10);
+    const bucket = buckets.get(key);
+    if (!bucket) continue;
+    const meta = parseJson(row.meta, {}) || {};
+    bucket.requests += 1;
+    if (row.status === "success") bucket.success += 1;
+    else bucket.fallbacks += 1;
+    bucket.credits += Number(row.cost) || 0;
+    bucket.tokens += Number(meta.tokens ?? 0);
+    if (typeof meta.latencyMs === "number") { bucket.latencySum += meta.latencyMs; bucket.latencyCount += 1; }
+  }
+  return [...buckets.values()].map((bucket) => ({
+    date: bucket.date,
+    requests: bucket.requests,
+    success: bucket.success,
+    fallbacks: bucket.fallbacks,
+    credits: Number(bucket.credits.toFixed(8)),
+    tokens: bucket.tokens,
+    avgLatencyMs: bucket.latencyCount ? Math.round(bucket.latencySum / bucket.latencyCount) : 0,
+  }));
+}
+
 export async function getJevStats(period = "7d") {
   try {
     const db = await getAdapter();
@@ -793,12 +822,13 @@ export async function getJevStats(period = "7d") {
       if (meta.caller) stats.callers[meta.caller] = (stats.callers[meta.caller] || 0) + 1;
       if (meta.choice) stats.choices[meta.choice] = (stats.choices[meta.choice] || 0) + 1;
     }
+    stats.series = buildJevSeries(rows, days);
     stats.avgLatencyMs = stats.latencyCount ? Math.round(stats.latencySumMs / stats.latencyCount) : 0;
     stats.successRate = stats.requests ? Math.round((stats.success / stats.requests) * 100) : 100;
     stats.topChoices = Object.entries(stats.choices).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([model, count]) => ({ model, count }));
     return stats;
   } catch (e) {
     console.error("[usageRepo] getJevStats failed:", e.message);
-    return { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, avgLatencyMs: 0, successRate: 100, callers: {}, choices: {}, topChoices: [] };
+    return { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, avgLatencyMs: 0, successRate: 100, callers: {}, choices: {}, topChoices: [], series: [] };
   }
 }

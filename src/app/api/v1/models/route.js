@@ -546,10 +546,26 @@ export async function buildModelsList(kindFilter, options = {}) {
     models.unshift({ id: "nineRouter/jev", object: "model", owned_by: "9router" });
   }
 
+  // Hide models the health registry marked as permanently unusable (unsupported /
+  // schema-incompatible). Temporary cooldowns stay listed: they recover on their own.
+  let permanentlyBlocked = new Set();
+  try {
+    const { getModelHealth } = await import("@/lib/modelHealth.js");
+    const health = await getModelHealth();
+    permanentlyBlocked = new Set(
+      Object.entries(health)
+        .filter(([, item]) => item.state === "disabled" || item.state === "incompatible")
+        .map(([id]) => id)
+    );
+  } catch {
+    // health registry unavailable: never block the models list
+  }
+
   const dedupedModels = [];
   const seenModelIds = new Set();
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
+    if (permanentlyBlocked.has(model.id)) continue;
     seenModelIds.add(model.id);
     dedupedModels.push(model);
   }

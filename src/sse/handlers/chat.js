@@ -26,6 +26,7 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
+import { getUnavailableModelIds, recordModelFailure, recordModelSuccess } from "@/lib/modelHealth.js";
 
 /**
  * Handle chat completion request
@@ -92,7 +93,10 @@ export async function handleChat(request, clientRawRequest = null) {
     let availableModels = [];
     try {
       // skipDynamicFetch: no slow upstream /models discovery per request
-      availableModels = (await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id);
+      const unavailableModels = await getUnavailableModelIds();
+      availableModels = (await buildModelsList(["llm"], { skipDynamicFetch: true }))
+        .map((model) => model.id)
+        .filter((modelId) => !unavailableModels.has(modelId));
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
     }
@@ -331,12 +335,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       },
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials, model);
+        recordModelSuccess(provider, model);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
       }
     });
 
     if (result.success) return result.response;
+
+    recordModelFailure({
+      provider,
+      model,
+      connectionId: credentials.connectionId,
+      status: result.status,
+      message: result.error,
+    });
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;

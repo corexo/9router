@@ -8,6 +8,8 @@ import ProviderLimits from "./components/ProviderLimits";
 import ActiveQuotas from "./components/ActiveQuotas";
 import PeakHoursBanner from "./components/PeakHoursBanner";
 import JevStatsCard from "./components/JevStatsCard";
+import JevChart from "./components/JevChart";
+import ModelHealthCard from "./components/ModelHealthCard";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -90,6 +92,8 @@ function UsageContent() {
         <Suspense fallback={<CardSkeleton />}>
           <UsageStats mode="overview" widgets={widgets} />
           <JevStatsCard period={period} />
+          <JevChart period={period} />
+          <ModelHealthCard />
           {widgets.activeQuotas !== false && (
             <div className="mt-6">
               <ActiveQuotas />
