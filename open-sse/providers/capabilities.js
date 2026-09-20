@@ -144,6 +144,11 @@ const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true,
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
 export const PROVIDER_CAPABILITIES = {
+  // Workers AI deployment caps this Qwen endpoint at 32K even though generic
+  // catalog/name heuristics report a much larger Qwen family window.
+  "cloudflare-ai": {
+    "@cf/qwen/qwen2.5-coder-32b-instruct": { tools: true, contextWindow: 32768, maxOutput: 8192 },
+  },
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
   "nvidia": {

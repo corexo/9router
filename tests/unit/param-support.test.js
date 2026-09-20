@@ -77,3 +77,11 @@ describe("stripUnsupportedParams", () => {
     expect(body.max_tokens).toBe(64000);
   });
 });
+
+describe("Cloudflare Workers AI context windows", () => {
+  it("reports the real 32K window for the Qwen coder endpoint", async () => {
+    const { getCapabilitiesForModel } = await import("../../open-sse/providers/capabilities.js");
+    const caps = getCapabilitiesForModel("cloudflare-ai", "@cf/qwen/qwen2.5-coder-32b-instruct");
+    expect(caps.contextWindow).toBe(32768);
+  });
+});
