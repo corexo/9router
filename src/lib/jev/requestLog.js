@@ -6,11 +6,11 @@
 const MAX_REQUESTS = 50;
 let requestLog = [];
 
-export function logJevRequest(criteria, numModels) {
+export function logJevRequest(payload, numModels) {
   requestLog.unshift({
     timestamp: new Date().toISOString(),
     numModels,
-    criteria,
+    ...payload,
   });
   if (requestLog.length > MAX_REQUESTS) {
     requestLog = requestLog.slice(0, MAX_REQUESTS);

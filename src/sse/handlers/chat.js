@@ -26,7 +26,10 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
-import { getUnavailableModelIds, recordModelFailure, recordModelSuccess } from "@/lib/modelHealth.js";
+import { getUnavailableModelIds, recordModelFailure, recordModelSuccess, getModelHealth } from "@/lib/modelHealth.js";
+import { getPricingForModel } from "open-sse/providers/pricing.js";
+import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
+import { getUsageStats } from "@/lib/db/repos/usageRepo.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { stripThinkingSuffix } from "open-sse/translator/concerns/thinkingUnified.js";
@@ -157,6 +160,11 @@ export async function handleChat(request, clientRawRequest = null) {
       warn: (message) => log.warn("JEV", message),
       info: (message) => log.info("JEV", `[9Router-Jev] ${message}`),
       debug: !!process.env.DEBUG_JEV || !!settings.jevDebug,
+      enrichCriteria: settings.jevEnrichCriteria !== false,
+      getPricingForModel,
+      getModelHealth,
+      getProviderConnections,
+      getUsageStats,
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
     // routedModel may carry a Jev-picked thinking suffix "model(level)" — strip it before

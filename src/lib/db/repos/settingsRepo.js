@@ -57,6 +57,7 @@ const DEFAULT_SETTINGS = {
   jevDefaultModel: "",
   jevTimeoutMs: 4500,
   jevDebug: false,
+  jevEnrichCriteria: true,
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,

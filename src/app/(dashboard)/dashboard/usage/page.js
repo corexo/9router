@@ -10,6 +10,7 @@ import PeakHoursBanner from "./components/PeakHoursBanner";
 import JevStatsCard from "./components/JevStatsCard";
 import JevChart from "./components/JevChart";
 import ModelHealthCard from "./components/ModelHealthCard";
+import JevRequestLogCard from "../debug/JevRequestLogCard";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -49,7 +50,7 @@ function UsageContent() {
   }, []);
 
   const tabFromUrl = searchParams.get("tab");
-  const activeTab = tabFromUrl && ["overview", "analytics", "logs", "details", "quota"].includes(tabFromUrl)
+  const activeTab = tabFromUrl && ["overview", "analytics", "logs", "details", "quota", "jev"].includes(tabFromUrl)
     ? tabFromUrl
     : "overview";
 
@@ -72,6 +73,7 @@ function UsageContent() {
             { value: "analytics", label: "Analytics" },
             { value: "quota", label: "Quota Tracker" },
             { value: "details", label: "Details" },
+            { value: "jev", label: "Jev" },
           ]}
           value={activeTab}
           onChange={handleTabChange}
@@ -113,6 +115,7 @@ function UsageContent() {
       )}
       {activeTab === "logs" && <RequestLogger />}
       {activeTab === "details" && <RequestDetailsTab />}
+      {activeTab === "jev" && <JevRequestLogCard />}
     </div>
   );
 }

@@ -62,9 +62,10 @@ async function buildEnrichedCriteria(models, options = {}) {
   const stats = await options.getUsageStats?.().catch(() => ({ byModel: {} }));
 
   for (const model of models) {
-    const parts = model.split("/");
-    const provider = parts[0];
-    const bareModel = parts[1] || model;
+    const slashIdx = model.indexOf("/");
+    const bareModel = slashIdx >= 0 ? model.slice(slashIdx + 1) : model;
+    const alias = slashIdx >= 0 ? model.slice(0, slashIdx) : model;
+    const provider = options.providerFromModelId ? options.providerFromModelId(model) : alias;
 
     let desc = model;
     const healthKey = `${provider}/${bareModel}`;
@@ -77,8 +78,8 @@ async function buildEnrichedCriteria(models, options = {}) {
     } else {
       const pricing = options.getPricingForModel?.(provider, bareModel);
       const costStr = pricing
-        ? `$${(pricing.input / 1000000).toFixed(4)} in/$${(pricing.output / 1000000).toFixed(4)} out`
-        : "Cost: unknown";
+        ? `$${pricing.input.toFixed(2)}/1M in, $${pricing.output.toFixed(2)}/1M out`
+        : "Subscription/flat-rate (no per-token cost)";
 
       const connForProvider = connections.find((c) => c.provider === provider || c.providerId === provider);
       let accountStr = "Account: OK";
@@ -93,13 +94,9 @@ async function buildEnrichedCriteria(models, options = {}) {
 
       const statsKey = `${bareModel} (${provider})`;
       const modelStats = stats.byModel?.[statsKey];
-      let successStr = "Success: N/A";
-      if (modelStats?.requests) {
-        const successRate = Math.round((modelStats.success || 0) / (modelStats.requests || 1) * 100);
-        successStr = `Success: ${successRate}%`;
-      }
+      const usageStr = modelStats?.requests ? `Used ${modelStats.requests}x recently` : "No recent usage data";
 
-      desc = `${model} | Cost: ${costStr} | ${successStr} | ${accountStr}`;
+      desc = `${model} | Cost: ${costStr} | ${usageStr} | ${accountStr}`;
     }
 
     result[model] = desc;
@@ -182,7 +179,12 @@ export async function selectJevModel(body, availableModels, options = {}) {
       ? await buildEnrichedCriteria(models, options)
       : buildCriteria(models);
 
-    logJevRequest(criteria, models.length);
+    logJevRequest({
+      prompt: extractJevPrompt(body),
+      modelCriteria: criteria,
+      thinkingCriteria: THINKING_CRITERIA,
+      enrichCriteria: !!options.enrichCriteria,
+    }, models.length);
 
     if (options.debug) {
       const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ');
