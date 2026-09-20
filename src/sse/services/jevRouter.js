@@ -2,7 +2,7 @@ import { extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/cli
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const QUESTION_ID = "target_model";
 const JEV_MODEL = "jev-1.13.0";
-const DEFAULT_TIMEOUT_MS = 1200;
+const DEFAULT_TIMEOUT_MS = 4500;
 const MAX_PROMPT_LENGTH = 3000;
 
 export const JEV_MODEL_ALIASES = new Set(["jev", "nineRouter/jev"]);
@@ -104,6 +104,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
     const data = await response.json();
     const selected = pickAnswer(data);
     logUsage({ status: "success", httpStatus: response.status, tokens: extractJevTokens(data), choice: typeof selected === "string" ? selected : undefined });
+    options.info?.(`Jev wählte '${selected}'`);
     if (typeof selected !== "string" || !models.includes(selected)) {
       return fail(`Ungültige Jev-Auswahl '${selected}'`);
     }

@@ -151,6 +151,7 @@ export async function handleChat(request, clientRawRequest = null) {
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
       warn: (message) => log.warn("JEV", message),
+      info: (message) => log.info("JEV", `[9Router-Jev] ${message}`),
     });
     // Fallback default must be resolvable (provider/model or combo); else first available
     const routedInfo = await getModelInfo(routedModel);

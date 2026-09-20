@@ -55,7 +55,7 @@ const DEFAULT_SETTINGS = {
   rtkEnabled: true,
   jevApiKey: "",
   jevDefaultModel: "",
-  jevTimeoutMs: 1200,
+  jevTimeoutMs: 4500,
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,
