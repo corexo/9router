@@ -260,6 +260,13 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
+  // Extract thinking level from Jev-picked model suffix (e.g. "model(high)" -> "high")
+  // Pass to chatCore via body for response headers
+  const thinkingSuffix = routedModel.match(/\((\w+)\)$/)?.[1] || "";
+  if (thinkingSuffix && !body.thinking_level) {
+    body.thinking_level = thinkingSuffix;
+  }
+
   return handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey);
 }
 

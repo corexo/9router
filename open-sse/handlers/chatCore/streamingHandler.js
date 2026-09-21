@@ -101,9 +101,16 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     console.error("[RequestDetail] Failed to save streaming request:", err.message);
   });
 
+  const responseHeaders = {
+    ...SSE_HEADERS,
+    "X-Model-Selected": model || "unknown",
+    "X-Thinking-Level": body?.thinking_level || "",
+    // Tokens will be populated in onStreamComplete callback
+  };
+
   return {
     success: true,
-    response: new Response(transformedBody, { headers: SSE_HEADERS })
+    response: new Response(transformedBody, { headers: responseHeaders })
   };
 }
 
