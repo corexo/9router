@@ -114,14 +114,17 @@ describe("Jev router", () => {
         getPricingForModel: () => ({ input: 3, output: 15 }),
         getCapabilitiesForModel: () => ({ contextWindow: 200000 }),
         getModelHealth: async () => ({}),
-        getProviderConnections: async () => [],
-        getUsageStats: async () => ({ byModel: {} }),
+        getProviderConnections: async () => [{ provider: "cc", rateLimitedUntil: new Date(Date.now() + 60_000).toISOString() }],
+        getUsageStats: async () => ({ byModel: {}, byProvider: { cc: { requests: 12, promptTokens: 25_000, completionTokens: 4_000 } } }),
         providerFromModelId: (id) => id.split("/")[0],
       },
     );
     const criteria = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.criteria;
     expect(criteria["cc/claude-sonnet-5"]).toContain("Sticky: YES");
     expect(criteria["cc/claude-sonnet-5"]).toContain("Context: 200k");
+    expect(criteria["cc/claude-sonnet-5"]).toContain("Provider group: cc (1 available models)");
+    expect(criteria["cc/claude-sonnet-5"]).toContain("Group usage: 12 requests, 25k in / 4k out recently");
+    expect(criteria["cc/claude-sonnet-5"]).toContain("Provider quota: all accounts rate-limited");
     expect(criteria["glm/glm-5"]).toContain("Sticky: NO");
   });
 });

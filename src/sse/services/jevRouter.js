@@ -117,6 +117,12 @@ async function buildEnrichedCriteria(models, options = {}, session = {}) {
   const connections = await options.getProviderConnections?.().catch(() => []);
   const stats = await options.getUsageStats?.().catch(() => ({ byModel: {} }));
 
+  const groupSizes = new Map();
+  for (const model of models) {
+    const provider = options.providerFromModelId ? options.providerFromModelId(model) : model.split("/")[0];
+    groupSizes.set(provider, (groupSizes.get(provider) || 0) + 1);
+  }
+
   for (const model of models) {
     const slashIdx = model.indexOf("/");
     const bareModel = slashIdx >= 0 ? model.slice(slashIdx + 1) : model;
@@ -137,20 +143,26 @@ async function buildEnrichedCriteria(models, options = {}, session = {}) {
         ? `$${pricing.input.toFixed(2)}/1M in, $${pricing.output.toFixed(2)}/1M out`
         : "Subscription/flat-rate (no per-token cost)";
 
-      const connForProvider = connections.find((c) => c.provider === provider || c.providerId === provider);
-      let accountStr = "Account: OK";
-      if (connForProvider?.rateLimitedUntil) {
-        const untilMs = new Date(connForProvider.rateLimitedUntil).getTime();
-        const nowMs = Date.now();
-        if (untilMs > nowMs) {
-          const secsLeft = Math.ceil((untilMs - nowMs) / 1000);
-          accountStr = `Account: Rate-limited (${secsLeft}s)`;
-        }
+      const providerConnections = connections.filter((c) => c.provider === provider || c.providerId === provider);
+      const activeLimits = providerConnections
+        .map((connection) => new Date(connection.rateLimitedUntil || 0).getTime())
+        .filter((untilMs) => untilMs > Date.now());
+      const groupStr = `Provider group: ${provider} (${groupSizes.get(provider)} available models)`;
+      let quotaStr = "Provider quota: OK";
+      if (activeLimits.length === providerConnections.length && activeLimits.length > 0) {
+        const secsLeft = Math.ceil((Math.min(...activeLimits) - Date.now()) / 1000);
+        quotaStr = `Provider quota: all accounts rate-limited (${secsLeft}s)`;
+      } else if (activeLimits.length > 0) {
+        quotaStr = `Provider quota: ${activeLimits.length}/${providerConnections.length} accounts rate-limited`;
       }
 
       const statsKey = `${bareModel} (${provider})`;
       const modelStats = stats.byModel?.[statsKey];
-      const usageStr = modelStats?.requests ? `Used ${modelStats.requests}x recently` : "No recent usage data";
+      const usageStr = modelStats?.requests ? `Model usage: ${modelStats.requests} requests recently` : "Model usage: none recently";
+      const providerStats = stats.byProvider?.[provider];
+      const groupUsageStr = providerStats?.requests
+        ? `Group usage: ${providerStats.requests} requests, ${Math.round((providerStats.promptTokens || 0) / 1000)}k in / ${Math.round((providerStats.completionTokens || 0) / 1000)}k out recently`
+        : "Group usage: none recently";
 
       const tier = getModelTier(bareModel);
       const tierStr = tier ? `${tier.toUpperCase()}: ${TIER_DESCRIPTIONS[tier]}` : "Tier: unknown";
@@ -159,7 +171,7 @@ async function buildEnrichedCriteria(models, options = {}, session = {}) {
       const contextStr = window > 0 ? `Context: ${Math.round(window / 1000)}k` : "Context: unknown";
       const stickyStr = session.previousModel === model ? "Sticky: YES" : "Sticky: NO";
 
-      desc = `${tierStr} | Cost: ${costStr} | ${contextStr} | ${stickyStr} | ${usageStr} | ${accountStr}`;
+      desc = `${tierStr} | ${groupStr} | Cost: ${costStr} | ${contextStr} | ${stickyStr} | ${usageStr} | ${groupUsageStr} | ${quotaStr}`;
     }
 
     result[model] = desc;
