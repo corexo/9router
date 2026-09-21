@@ -96,6 +96,15 @@ export default function JevRequestLogCard() {
                 </div>
               )}
 
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
+                  </div>
+                </div>
+              )}
+
               {latest.invalid && (
                 <div className="bg-yellow-50 border border-yellow-300 rounded p-2">
                   <span className="text-yellow-800">Invalid Jev answer: </span>
@@ -103,10 +112,28 @@ export default function JevRequestLogCard() {
                 </div>
               )}
 
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
+                  </div>
+                </div>
+              )}
+
               {latest.error && (
                 <div className="bg-red-50 border border-red-300 rounded p-2">
                   <span className="text-red-800">Jev error: </span>
                   <span className="font-mono text-xs">{latest.error}</span>
+                </div>
+              )}
+
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
+                  </div>
                 </div>
               )}
 
@@ -118,11 +145,29 @@ export default function JevRequestLogCard() {
                 </div>
               )}
 
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
+                  </div>
+                </div>
+              )}
+
               {latest.prompt && (
                 <div className="mt-3">
                   <div className="font-semibold text-gray-700 mb-2">Prompt sent to Jev (state, truncated 3000 chars):</div>
                   <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-40 overflow-y-auto text-xs whitespace-pre-wrap">
                     {latest.prompt}
+                  </div>
+                </div>
+              )}
+
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
                   </div>
                 </div>
               )}
@@ -149,6 +194,15 @@ export default function JevRequestLogCard() {
                         <div className="text-gray-700 ml-2 text-xs break-words">{desc}</div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {latest.fullPayload && (
+                <div className="mt-3">
+                  <div className="font-semibold text-gray-700 mb-2">Full SystemOne Request Payload (JSON):</div>
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap break-words">
+                    {JSON.stringify(latest.fullPayload, null, 2)}
                   </div>
                 </div>
               )}

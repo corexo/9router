@@ -199,36 +199,38 @@ export async function selectJevModel(body, availableModels, options = {}) {
       ? await buildEnrichedCriteria(models, options)
       : buildCriteria(models);
 
-    logJevRequest({
-      prompt: extractJevPrompt(body),
-      modelCriteria: criteria,
-      thinkingCriteria: THINKING_CRITERIA,
-      fullPayload: { state: extractJevPrompt(body), model: JEV_MODEL, questions: { [MODEL_QUESTION_ID]: { type: "choice", criteria }, [THINKING_QUESTION_ID]: { type: "choice", criteria: THINKING_CRITERIA } } },
-      enrichCriteria: !!options.enrichCriteria,
-    }, models.length);
-
-    if (options.debug) {
-      const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ');
-      options.info?.(`[JEV-DEBUG] ${Object.keys(criteria).length} Modelle, Beispiele: ${sample}`);
-      options.info?.(`[JEV-DEBUG] Full payload JSON:\n${requestBody}`);
-    }
-
-    const requestBody = JSON.stringify({
+    const payload = {
       state: extractJevPrompt(body),
       model: JEV_MODEL,
       questions: {
         [MODEL_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, recent usage and account status. Models sharing a tier are roughly equal in strength — prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
+          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, recent usage and account status. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
           criteria,
         },
         [THINKING_QUESTION_ID]: {
           type: "choice",
-          instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities — the router clamps this to what the chosen model actually supports.",
+          instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities - the router clamps this to what the chosen model actually supports.",
           criteria: THINKING_CRITERIA,
         },
       },
-    });
+    };
+    const requestBody = JSON.stringify(payload);
+
+    logJevRequest({
+      prompt: payload.state,
+      modelCriteria: criteria,
+      thinkingCriteria: THINKING_CRITERIA,
+      fullPayload: payload,
+      enrichCriteria: !!options.enrichCriteria,
+    }, models.length);
+
+    if (options.debug) {
+      const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" | ");
+      options.info?.(`[JEV-DEBUG] ${Object.keys(criteria).length} Modelle, Beispiele: ${sample}`);
+      options.info?.(`[JEV-DEBUG] Full payload JSON:\n${requestBody}`);
+    }
+
     const response = await (options.fetch || fetch)(JEV_API_URL, {
       method: "POST",
       headers: {
