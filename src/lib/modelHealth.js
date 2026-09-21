@@ -1,7 +1,7 @@
 import { getMeta, setMeta } from "@/lib/db/helpers/metaStore.js";
 
 const META_KEY = "modelHealthRegistry";
-const TEMPORARY_COOLDOWN_MS = 10 * 60 * 1000;
+const TEMPORARY_COOLDOWN_MS = 30 * 60 * 1000;
 
 /**
  * Classify an upstream failure into a health-policy decision.
@@ -12,11 +12,28 @@ const TEMPORARY_COOLDOWN_MS = 10 * 60 * 1000;
  */
 export function classifyModelFailure(status, message = "") {
   const text = String(message).toLowerCase();
-  if (text.includes("model_not_supported") || text.includes("model not supported") || text.includes("model not found") || text.includes("does not exist")) {
+  
+  // 404 Not Found (e.g. Ollama model missing) → permanent disable
+  if (status === 404 || text.includes("model not found") || text.includes("model not exist")) {
     return { type: "unsupported", scope: "permanent" };
   }
-  // Context overflow (incl. Cloudflare 413 / code 5021): blame the request, not the
-  // model — it works fine for smaller payloads, so never cool it down globally.
+  
+  // Model explicitly not supported by provider/account
+  if (text.includes("model_not_supported") || text.includes("model not supported") || text.includes("does not exist")) {
+    return { type: "unsupported", scope: "permanent" };
+  }
+  
+  // 429 Quota/Rate limit → 30min cooldown
+  if (status === 429 || text.includes("quota exceeded") || text.includes("resource_exhausted") || text.includes("rate limit exceeded")) {
+    return { type: "rate_limit", scope: "cooldown" };
+  }
+  
+  // GLM always requires thinking (cannot disable to none) → 30min cooldown
+  if (text.includes("always engages in thinking") || text.includes("cannot be disabled")) {
+    return { type: "incompatible", scope: "cooldown" };
+  }
+  
+  // Context overflow: blame request, not model
   if (
     status === 413 ||
     text.includes("context window limit") ||
@@ -26,12 +43,17 @@ export function classifyModelFailure(status, message = "") {
   ) {
     return { type: "context_limit", scope: "request" };
   }
+  
+  // Schema incompatibility
   if (text.includes("bad input") || text.includes("oneof") || text.includes("type mismatch") || text.includes("'prompt'")) {
     return { type: "incompatible", scope: "capability" };
   }
-  if (status === 429 || status >= 500 || text.includes("timeout") || text.includes("timed out")) {
-    return { type: status === 429 ? "rate_limit" : "temporary", scope: "cooldown" };
+  
+  // 5xx server errors, timeouts
+  if (status >= 500 || status === 408 || text.includes("timeout") || text.includes("timed out")) {
+    return { type: "temporary", scope: "cooldown" };
   }
+  
   return { type: "unknown", scope: "request" };
 }
 

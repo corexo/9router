@@ -142,7 +142,13 @@ function resolveThinkingSuffix(rawLevel, chosenModel, options) {
   if (!Array.isArray(supported) || supported.length === 0) return ""; // model has no reasoning capability at all
 
   if (supported.includes(level)) return `(${level})`;
-  if (level === "none") return ""; // model can't disable thinking anyway — leave provider default
+  // If model requires thinking (can't disable to none), pick lowest available level
+  if (level === "none" && !supported.includes("none")) {
+    const scale = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+    const minLevel = supported.sort((a, b) => scale.indexOf(a) - scale.indexOf(b))[0];
+    return minLevel ? `(${minLevel})` : "";
+  }
+  if (level === "none") return ""; // model explicitly supports disabling thinking
 
   // Clamp to nearest supported level on the shared low->high scale.
   const scale = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
