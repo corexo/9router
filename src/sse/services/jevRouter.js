@@ -134,18 +134,31 @@ function resolveThinkingSuffix(rawLevel, chosenModel, options) {
   if (!GENERIC_THINKING_LEVELS.includes(level)) return "";
 
   const getLevels = options.getThinkingLevels;
-  if (typeof getLevels !== "function") return "";
+  if (typeof getLevels !== "function") {
+    console.error("[JEV-DEBUG] getThinkingLevels not a function for", chosenModel);
+    return "";
+  }
 
   const provider = options.providerFromModelId?.(chosenModel) ?? chosenModel.split("/")[0];
   const bareModel = chosenModel.includes("/") ? chosenModel.slice(chosenModel.indexOf("/") + 1) : chosenModel;
   const supported = getLevels(provider, bareModel);
-  if (!Array.isArray(supported) || supported.length === 0) return ""; // model has no reasoning capability at all
+  if (!Array.isArray(supported) || supported.length === 0) {
+    console.error("[JEV-DEBUG] No supported levels for", provider, bareModel, "got:", supported);
+    return ""; // model has no reasoning capability at all
+  }
 
-  if (supported.includes(level)) return `(${level})`;
+  if (supported.includes(level)) {
+    console.log("[JEV-DEBUG] Level supported:", level, "for", chosenModel);
+    return `(${level})`;
+  }
   // If model requires thinking (can't disable to none), pick lowest available level
   if (level === "none" && !supported.includes("none")) {
+    // Normalize provider-specific thinking levels to generic scale (e.g. GLM's "thinking"→"high")
+    const LEVEL_ALIASES = { thinking: "high" };
+    const normalized = supported.map(l => LEVEL_ALIASES[l] || l);
     const scale = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-    const minLevel = supported.sort((a, b) => scale.indexOf(a) - scale.indexOf(b))[0];
+    const minLevel = normalized.sort((a, b) => scale.indexOf(a) - scale.indexOf(b))[0];
+    console.log("[JEV-DEBUG] Fallback none -> minLevel:", minLevel, "for", chosenModel, "supported:", supported, "normalized:", normalized);
     return minLevel ? `(${minLevel})` : "";
   }
   if (level === "none") return ""; // model explicitly supports disabling thinking
