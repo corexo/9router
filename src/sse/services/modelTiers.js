@@ -22,7 +22,9 @@ export const TIER_DESCRIPTIONS = {
 const TIER_PREFIXES = [
   // frontier
   ["claude-opus-5", "frontier"],
-  ["claude-fable-5", "frontier"],
+  // fable is cheaper than opus at the same tier, which made Jev pick it for
+  // trivial follow-ups ("ja", "weiter"); it is strong, not opus-grade.
+  ["claude-fable-5", "strong"],
   ["gpt-6-astra", "frontier"],
   ["gpt-6", "frontier"],
   ["glm-5.3", "frontier"],

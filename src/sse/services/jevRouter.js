@@ -1,5 +1,6 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
+import { getSessionModel, sessionKey, setSessionModel } from "@/lib/jev/sessionModels.js";
 import { getModelTier, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
@@ -53,7 +54,13 @@ export function extractSessionContext(body) {
 
   const totalChars = messages.reduce((sum, message) => sum + textFromContent(message?.content).length, 0);
   const lastAssistant = messages.filter((message) => message?.role === "assistant").at(-1);
-  const previousModel = body?.metadata?.previous_model ?? body?.previous_model ?? lastAssistant?.model ?? null;
+  // Clients rarely send a model id back, so fall back to 9Router's own memory of
+  // what this conversation was routed to last turn.
+  const previousModel = body?.metadata?.previous_model
+    ?? body?.previous_model
+    ?? lastAssistant?.model
+    ?? getSessionModel(sessionKey(body))
+    ?? null;
 
   return {
     approxTotalTokens: Math.ceil(totalChars / 4),
@@ -64,11 +71,25 @@ export function extractSessionContext(body) {
 
 // SystemOne expects `state` as a string, so session stats ride along as a header.
 function buildJevState(body, session) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const currentUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  const priorContext = currentUserIndex > 0
+    ? messages
+      .slice(0, currentUserIndex)
+      .filter((message) => message?.role === "user" || message?.role === "assistant")
+      .slice(-2)
+      .map((message) => `${message.role}: ${textFromContent(message.content).slice(0, 1000)}`)
+      .join("\n")
+    : "none";
+
   return [
     "[9Router session context]",
     `Approx total tokens: ${session.approxTotalTokens}`,
     `History turns: ${session.historyTurns}`,
     `Previous model: ${session.previousModel || "unknown"}`,
+    "Important: session size only determines context-window compatibility; it does not mean the current task is difficult.",
+    "[Recent conversation context]",
+    priorContext,
     "[Current user request]",
     extractJevPrompt(body),
   ].join("\n");
@@ -257,7 +278,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       questions: {
         [MODEL_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
+          instructions: "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
           criteria,
         },
       },
@@ -316,7 +337,8 @@ export async function selectJevModel(body, availableModels, options = {}) {
     }
 
     updateLastJevRequest({ selectedModel: selected });
-    options.info?.(`Jev wählte '${selected}'`);
+    setSessionModel(sessionKey(body), selected);
+    options.info?.(`Jev wählte '${selected}'${session.previousModel === selected ? " (sticky)" : ""}`);
     return selected;
   } catch (error) {
     const reason = error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}`;
