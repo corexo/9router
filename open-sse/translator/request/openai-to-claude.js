@@ -130,15 +130,17 @@ Respond ONLY with the JSON object, no other text.`);
   }
 
   // System with Claude Code prompt and cache_control
+  // Breakpoint on LAST system block covers all preceding blocks as stable prefix.
   const claudeCodePrompt = { type: CLAUDE_BLOCK.TEXT, text: CLAUDE_SYSTEM_PROMPT };
 
   if (systemParts.length > 0) {
     const systemText = systemParts.join("\n");
     result.system = [
       claudeCodePrompt,
-      { type: CLAUDE_BLOCK.TEXT, text: systemText, cache_control: { type: "ephemeral", ttl: "1h" } }
+      { type: CLAUDE_BLOCK.TEXT, text: systemText, cache_control: { type: "ephemeral" } }
     ];
   } else {
+    claudeCodePrompt.cache_control = { type: "ephemeral" };
     result.system = [claudeCodePrompt];
   }
 
@@ -178,7 +180,7 @@ Respond ONLY with the JSON object, no other text.`);
     }
 
     if (result.tools.length > 0) {
-      result.tools[result.tools.length - 1].cache_control = { type: "ephemeral", ttl: "1h" };
+      result.tools[result.tools.length - 1].cache_control = { type: "ephemeral" };
     }
   }
 
