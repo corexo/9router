@@ -203,12 +203,14 @@ export async function selectJevModel(body, availableModels, options = {}) {
       prompt: extractJevPrompt(body),
       modelCriteria: criteria,
       thinkingCriteria: THINKING_CRITERIA,
+      fullPayload: { state: extractJevPrompt(body), model: JEV_MODEL, questions: { [MODEL_QUESTION_ID]: { type: "choice", criteria }, [THINKING_QUESTION_ID]: { type: "choice", criteria: THINKING_CRITERIA } } },
       enrichCriteria: !!options.enrichCriteria,
     }, models.length);
 
     if (options.debug) {
       const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' | ');
       options.info?.(`[JEV-DEBUG] ${Object.keys(criteria).length} Modelle, Beispiele: ${sample}`);
+      options.info?.(`[JEV-DEBUG] Full payload JSON:\n${requestBody}`);
     }
 
     const requestBody = JSON.stringify({
