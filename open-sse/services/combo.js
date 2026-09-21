@@ -8,31 +8,8 @@ import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
 import { getStickyModel, setStickyPin, clearStickyPin } from "./cacheSessionPin.js";
-// Hardcoded local-first combo with configurable models
-// Set via: LOCAL_FIRST_MODELS="mistral-7b,neural-chat-7b,claude-opus-4.7,glm/glm-5.1"
-function getLocalFirstModels() {
-  const env = process.env.LOCAL_FIRST_MODELS;
-  if (env) {
-    return env.split(",").map(m => m.trim()).filter(m => m.length > 0);
-  }
-  // Fallback defaults if env not set
-  return [
-    "mistral-7b",
-    "neural-chat-7b",
-    "claude-opus-4.7",
-    "glm/glm-5.1"
-  ];
-}
-
-const BUILTIN_COMBOS = {
-  "local-first": {
-    name: "local-first",
-    strategy: "fallback",
-    get models() {
-      return getLocalFirstModels();
-    }
-  }
-};
+// Builtin combos (can be overridden via Dashboard UI)
+const BUILTIN_COMBOS = {};
 
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
@@ -322,11 +299,6 @@ export function filterPeakHours(models, peak) {
  */
 export function getComboModelsFromData(modelStr, combosData) {
   if (modelStr.includes("/")) return null;
-  
-  // Check builtin combos first (local-first strategy)
-  if (BUILTIN_COMBOS[modelStr]) {
-    return BUILTIN_COMBOS[modelStr].models;
-  }
   
   const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
   const combo = combos.find(c => c.name === modelStr);
