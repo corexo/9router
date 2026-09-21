@@ -83,26 +83,9 @@ export async function getModelInfo(modelStr) {
  * @returns {Promise<string[]|null>} Array of models or null if not a combo
  */
 
-// Hardcoded local-first combo (fallback if DB empty)
-const BUILTIN_COMBOS = {
-  "local-first": {
-    models: [
-      "custom-provider/macbook-lm-studio",
-      "custom-provider/unsloth",
-      "claude-opus-4.7",
-      "glm/glm-5.1"
-    ]
-  }
-};
-
 export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
-
-  // Check builtin combos first (local-first as fallback)
-  if (BUILTIN_COMBOS[modelStr]) {
-    return BUILTIN_COMBOS[modelStr].models;
-  }
 
   const combo = await getComboByName(modelStr);
   if (combo && combo.models && combo.models.length > 0) {
