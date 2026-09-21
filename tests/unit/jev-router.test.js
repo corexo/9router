@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { extractJevPrompt, selectJevModel } from "../../src/sse/services/jevRouter.js";
+import { extractJevPrompt, extractSessionContext, selectJevModel } from "../../src/sse/services/jevRouter.js";
 
 describe("Jev router", () => {
   afterEach(() => {
@@ -47,7 +47,8 @@ describe("Jev router", () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" } } }) }));
     await selectJevModel({ input: "hi" }, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock });
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sent.state).toBe("hi");
+    expect(sent.state).toContain("hi");
+    expect(sent.state).toContain("[9Router session context]");
     expect(Object.keys(sent.questions.target_model.criteria)).toEqual(["openai/gpt-4o"]);
     expect(fetchMock.mock.calls[0][0]).toBe("https://jev-ai.pro/api/v1/systemone");
   });
@@ -70,57 +71,57 @@ describe("Jev router", () => {
     expect(await selectJevModel({}, ["openai/gpt-4o"], { fetch, warn: vi.fn() })).toBe("openai/gpt-4o");
   });
 
-  it("sends a thinking question alongside the model question", async () => {
+  // Thinking-level selection is deliberately disabled: only target_model is asked,
+  // and the returned model id never carries a (level) suffix.
+  it("asks only for the model, never for a thinking level", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" }, target_thinking: { selected: "high" } } }),
+      json: async () => ({ results: { target_model: { selected: "anthropic/claude-opus" } } }),
     }));
-    await selectJevModel({}, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock });
-    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(sent.questions.target_thinking.type).toBe("choice");
-    expect(Object.keys(sent.questions.target_thinking.criteria)).toEqual(["none", "low", "medium", "high", "xhigh"]);
-  });
-
-  it("appends a thinking suffix when the chosen model supports the exact level", async () => {
-    const fetchMock = async () => ({
-      ok: true,
-      json: async () => ({ results: { target_model: { selected: "anthropic/claude-opus" }, target_thinking: { selected: "high" } } }),
-    });
-    const getThinkingLevels = vi.fn(() => ["low", "medium", "high", "xhigh"]);
+    const getThinkingLevels = vi.fn(() => ["low", "high"]);
     const selected = await selectJevModel({}, ["anthropic/claude-opus"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
-    expect(selected).toBe("anthropic/claude-opus(high)");
-    expect(getThinkingLevels).toHaveBeenCalledWith("anthropic", "claude-opus");
-  });
-
-  it("clamps to the nearest supported level when the exact one is unavailable", async () => {
-    const fetchMock = async () => ({
-      ok: true,
-      json: async () => ({ results: { target_model: { selected: "codebuddy-cn/glm-5.3" }, target_thinking: { selected: "medium" } } }),
-    });
-    // glm-5.3 pattern override only supports low|high|max
-    const getThinkingLevels = () => ["low", "high", "max"];
-    const selected = await selectJevModel({}, ["codebuddy-cn/glm-5.3"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
-    expect(selected).toBe("codebuddy-cn/glm-5.3(low)");
-  });
-
-  it("omits the suffix when the chosen model has no reasoning capability at all", async () => {
-    const fetchMock = async () => ({
-      ok: true,
-      json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" }, target_thinking: { selected: "high" } } }),
-    });
-    const getThinkingLevels = () => null; // model.reasoning === false
-    const selected = await selectJevModel({}, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
-    expect(selected).toBe("openai/gpt-4o");
-  });
-
-  it("omits the suffix for a combo selection (no slash) even if Jev proposed a level", async () => {
-    const fetchMock = async () => ({
-      ok: true,
-      json: async () => ({ results: { target_model: { selected: "Sonnet" }, target_thinking: { selected: "high" } } }),
-    });
-    const getThinkingLevels = vi.fn();
-    const selected = await selectJevModel({}, ["Sonnet"], { apiKey: "k", fetch: fetchMock, getThinkingLevels });
-    expect(selected).toBe("Sonnet");
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(Object.keys(sent.questions)).toEqual(["target_model"]);
+    expect(selected).toBe("anthropic/claude-opus");
     expect(getThinkingLevels).not.toHaveBeenCalled();
+  });
+
+  it("extracts session stats from the whole history", () => {
+    const session = extractSessionContext({
+      messages: [
+        { role: "user", content: "a".repeat(400) },
+        { role: "assistant", content: "b".repeat(400) },
+      ],
+      metadata: { previous_model: "cc/claude-sonnet-5" },
+    });
+    expect(session.approxTotalTokens).toBe(200);
+    expect(session.historyTurns).toBe(2);
+    expect(session.previousModel).toBe("cc/claude-sonnet-5");
+  });
+
+  it("marks the previous model as sticky in enriched criteria", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ results: { target_model: { selected: "cc/claude-sonnet-5" } } }),
+    }));
+    await selectJevModel(
+      { messages: [{ role: "user", content: "hi" }], metadata: { previous_model: "cc/claude-sonnet-5" } },
+      ["cc/claude-sonnet-5", "glm/glm-5"],
+      {
+        apiKey: "k",
+        fetch: fetchMock,
+        enrichCriteria: true,
+        getPricingForModel: () => ({ input: 3, output: 15 }),
+        getCapabilitiesForModel: () => ({ contextWindow: 200000 }),
+        getModelHealth: async () => ({}),
+        getProviderConnections: async () => [],
+        getUsageStats: async () => ({ byModel: {} }),
+        providerFromModelId: (id) => id.split("/")[0],
+      },
+    );
+    const criteria = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.criteria;
+    expect(criteria["cc/claude-sonnet-5"]).toContain("Sticky: YES");
+    expect(criteria["cc/claude-sonnet-5"]).toContain("Context: 200k");
+    expect(criteria["glm/glm-5"]).toContain("Sticky: NO");
   });
 });

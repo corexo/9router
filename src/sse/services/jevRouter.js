@@ -40,6 +40,40 @@ export function extractJevPrompt(body) {
   return textFromContent(selected?.content).slice(0, MAX_PROMPT_LENGTH);
 }
 
+/**
+ * Session stats Jev needs on top of the last prompt: how big the conversation
+ * already is (context-window fit) and which model answered last (prompt-cache
+ * stickiness). previousModel is only reliable if the client sends it explicitly —
+ * plain OpenAI messages carry no model id.
+ */
+export function extractSessionContext(body) {
+  const messages = Array.isArray(body?.messages)
+    ? body.messages
+    : Array.isArray(body?.input) ? body.input : [];
+
+  const totalChars = messages.reduce((sum, message) => sum + textFromContent(message?.content).length, 0);
+  const lastAssistant = messages.filter((message) => message?.role === "assistant").at(-1);
+  const previousModel = body?.metadata?.previous_model ?? body?.previous_model ?? lastAssistant?.model ?? null;
+
+  return {
+    approxTotalTokens: Math.ceil(totalChars / 4),
+    historyTurns: messages.length,
+    previousModel: typeof previousModel === "string" && previousModel.trim() ? previousModel.trim() : null,
+  };
+}
+
+// SystemOne expects `state` as a string, so session stats ride along as a header.
+function buildJevState(body, session) {
+  return [
+    "[9Router session context]",
+    `Approx total tokens: ${session.approxTotalTokens}`,
+    `History turns: ${session.historyTurns}`,
+    `Previous model: ${session.previousModel || "unknown"}`,
+    "[Current user request]",
+    extractJevPrompt(body),
+  ].join("\n");
+}
+
 function resolveTimeout(configured) {
   const value = Number.parseInt(configured ?? process.env.JEV_TIMEOUT_MS ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
@@ -54,7 +88,7 @@ export function buildCriteria(models) {
  * Build criteria with cost, success rate, and account status for better Jev decisions.
  * options: { getPricingForModel, getModelHealth, getProviderConnections, getUsageStats }
  */
-async function buildEnrichedCriteria(models, options = {}) {
+async function buildEnrichedCriteria(models, options = {}, session = {}) {
   if (!options.getPricingForModel || !options.getModelHealth) return buildCriteria(models);
 
   const result = {};
@@ -100,7 +134,11 @@ async function buildEnrichedCriteria(models, options = {}) {
       const tier = getModelTier(bareModel);
       const tierStr = tier ? `${tier.toUpperCase()}: ${TIER_DESCRIPTIONS[tier]}` : "Tier: unknown";
 
-      desc = `${tierStr} | Cost: ${costStr} | ${usageStr} | ${accountStr}`;
+      const window = Number(options.getCapabilitiesForModel?.(provider, bareModel)?.contextWindow) || 0;
+      const contextStr = window > 0 ? `Context: ${Math.round(window / 1000)}k` : "Context: unknown";
+      const stickyStr = session.previousModel === model ? "Sticky: YES" : "Sticky: NO";
+
+      desc = `${tierStr} | Cost: ${costStr} | ${contextStr} | ${stickyStr} | ${usageStr} | ${accountStr}`;
     }
 
     result[model] = desc;
@@ -208,23 +246,19 @@ export async function selectJevModel(body, availableModels, options = {}) {
     fallbackReason: result.fallbackReason,
   });
   try {
+    const session = extractSessionContext(body);
     const criteria = options.enrichCriteria
-      ? await buildEnrichedCriteria(models, options)
+      ? await buildEnrichedCriteria(models, options, session)
       : buildCriteria(models);
 
     const payload = {
-      state: extractJevPrompt(body),
+      state: buildJevState(body, session),
       model: JEV_MODEL,
       questions: {
         [MODEL_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, recent usage and account status. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
+          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
           criteria,
-        },
-        [THINKING_QUESTION_ID]: {
-          type: "choice",
-          instructions: "How much reasoning effort does this specific request need? Pick based on task difficulty, not on the chosen model's capabilities - the router clamps this to what the chosen model actually supports.",
-          criteria: THINKING_CRITERIA,
         },
       },
     };
@@ -233,7 +267,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
     logJevRequest({
       prompt: payload.state,
       modelCriteria: criteria,
-      thinkingCriteria: THINKING_CRITERIA,
+
       fullPayload: payload,
       enrichCriteria: !!options.enrichCriteria,
     }, models.length);
@@ -264,7 +298,6 @@ export async function selectJevModel(body, availableModels, options = {}) {
     const rawText = typeof response.text === "function" ? await response.text() : JSON.stringify(await response.json());
     const data = safeParseJson(rawText);
     const selected = pickAnswer(data, MODEL_QUESTION_ID);
-    const rawThinking = pickAnswer(data, THINKING_QUESTION_ID);
     // Jev's SystemOne API never returns a usage field (extractJevTokens is a real-usage
     // fast path, currently always 0); fall back to estimating from actual payload sizes
     // so the dashboard shows non-zero, roughly-accurate in/out token counts.
@@ -277,17 +310,14 @@ export async function selectJevModel(body, availableModels, options = {}) {
       choice: typeof selected === "string" ? selected : undefined,
     });
     if (typeof selected !== "string" || !models.includes(selected)) {
-      updateLastJevRequest({ rawSelected: selected, rawThinking, invalid: true });
+      updateLastJevRequest({ rawSelected: selected, invalid: true });
       options.info?.(`Jev wählte ungültig '${selected}'`);
       return fail(`Ungültige Jev-Auswahl '${selected}'`);
     }
 
-    // Combo names never contain "/"; a thinking suffix only makes sense on a concrete
-    // provider/model target, not on a combo (which resolves to many different models).
-    const suffix = selected.includes("/") ? resolveThinkingSuffix(rawThinking, selected, options) : "";
-    updateLastJevRequest({ selectedModel: selected, rawThinking, resolvedThinking: suffix ? suffix.slice(1, -1) : null });
-    options.info?.(`Jev wählte '${selected}'${suffix ? ` Thinking='${suffix.slice(1, -1)}'` : ""}${rawThinking && !suffix ? ` (angefragt '${rawThinking}', nicht anwendbar)` : ""}`);
-    return `${selected}${suffix}`;
+    updateLastJevRequest({ selectedModel: selected });
+    options.info?.(`Jev wählte '${selected}'`);
+    return selected;
   } catch (error) {
     const reason = error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}`;
     updateLastJevRequest({ error: reason });

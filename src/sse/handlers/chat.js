@@ -162,6 +162,7 @@ export async function handleChat(request, clientRawRequest = null) {
       debug: !!process.env.DEBUG_JEV || !!settings.jevDebug,
       enrichCriteria: settings.jevEnrichCriteria !== false,
       getPricingForModel,
+      getCapabilitiesForModel,
       getModelHealth,
       getProviderConnections,
       getUsageStats,
