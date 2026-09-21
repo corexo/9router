@@ -1,32 +1,39 @@
 /**
  * In-memory log of recent Jev requests for debugging.
  * Stores last N requests with their criteria to show in dashboard.
+ *
+ * Next.js bundles each route separately, so a plain module-level array would
+ * give the chat handler and the /api/debug/jev route two distinct instances.
+ * Pinning the store on globalThis keeps a single shared log across bundles.
  */
 
 const MAX_REQUESTS = 50;
-let requestLog = [];
+const STORE = Symbol.for("9router.jevRequestLog");
+
+function store() {
+  if (!globalThis[STORE]) globalThis[STORE] = [];
+  return globalThis[STORE];
+}
 
 export function logJevRequest(payload, numModels) {
-  requestLog.unshift({
+  const log = store();
+  log.unshift({
     timestamp: new Date().toISOString(),
     numModels,
     ...payload,
   });
-  if (requestLog.length > MAX_REQUESTS) {
-    requestLog = requestLog.slice(0, MAX_REQUESTS);
-  }
+  if (log.length > MAX_REQUESTS) log.length = MAX_REQUESTS;
 }
 
 export function updateLastJevRequest(result) {
-  if (requestLog.length > 0) {
-    Object.assign(requestLog[0], result);
-  }
+  const log = store();
+  if (log.length > 0) Object.assign(log[0], result);
 }
 
 export function getJevRequestLog() {
-  return requestLog;
+  return store();
 }
 
 export function clearJevRequestLog() {
-  requestLog = [];
+  store().length = 0;
 }

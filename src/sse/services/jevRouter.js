@@ -1,5 +1,6 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
+import { getModelTier, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
@@ -96,7 +97,10 @@ async function buildEnrichedCriteria(models, options = {}) {
       const modelStats = stats.byModel?.[statsKey];
       const usageStr = modelStats?.requests ? `Used ${modelStats.requests}x recently` : "No recent usage data";
 
-      desc = `${model} | Cost: ${costStr} | ${usageStr} | ${accountStr}`;
+      const tier = getModelTier(bareModel);
+      const tierStr = tier ? `${tier.toUpperCase()}: ${TIER_DESCRIPTIONS[tier]}` : "Tier: unknown";
+
+      desc = `${tierStr} | Cost: ${costStr} | ${usageStr} | ${accountStr}`;
     }
 
     result[model] = desc;
@@ -207,7 +211,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       questions: {
         [MODEL_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which model should handle this coding-agent request best regarding quality, specialization and latency?",
+          instructions: "Which model should handle this coding-agent request best? Each option lists its quality tier, per-token cost, recent usage and account status. Models sharing a tier are roughly equal in strength — prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
           criteria,
         },
         [THINKING_QUESTION_ID]: {
