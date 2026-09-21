@@ -7,6 +7,20 @@ import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
+const BUILTIN_COMBOS = {
+  "local-first": {
+    name: "local-first",
+    strategy: "fallback",
+    models: [
+      "custom-provider/macbook-lm-studio",
+      "custom-provider/unsloth",
+      "claude-opus-4.7",
+      "glm/glm-5.1"
+    ]
+  }
+};
+
+
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
 const HARD_CAPS = new Set(["vision", "pdf", "audioInput", "videoInput"]);
@@ -293,12 +307,14 @@ export function filterPeakHours(models, peak) {
  * @returns {string[]|null} Array of models or null if not a combo
  */
 export function getComboModelsFromData(modelStr, combosData) {
-  // Don't check if it's in provider/model format
   if (modelStr.includes("/")) return null;
   
-  // Handle both array and object formats
-  const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
+  // Check builtin combos first (local-first strategy)
+  if (BUILTIN_COMBOS[modelStr]) {
+    return BUILTIN_COMBOS[modelStr].models;
+  }
   
+  const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
   const combo = combos.find(c => c.name === modelStr);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
