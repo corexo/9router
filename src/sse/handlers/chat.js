@@ -114,6 +114,14 @@ export async function handleChat(request, clientRawRequest = null) {
     let availableModels = [];
     try {
       const unavailableModels = await getUnavailableModelIds();
+      // Health entries use canonical provider ids (e.g. claude), while candidates
+      // often use UI aliases (e.g. cc). Compare canonical ids, otherwise a 429
+      // lock does not remove cc/claude-* from Jev's next decision.
+      const unavailableCanonicalIds = new Set([...unavailableModels].map((modelId) => {
+        const slash = modelId.indexOf("/");
+        if (slash < 0) return modelId;
+        return `${providerFromModelId(modelId)}/${modelId.slice(slash + 1)}`;
+      }));
       // A combo named "jev" narrows the candidate pool to exactly its models;
       // without one, every active LLM stays a candidate. The pool is deliberately
       // NOT peak-hour filtered: Claude peak hours shape normal combo rotation
@@ -136,7 +144,7 @@ export async function handleChat(request, clientRawRequest = null) {
       // never routes a request to a model whose window is too small (#1957).
       const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
       availableModels = pool
-        .filter((modelId) => !unavailableModels.has(modelId))
+        .filter((modelId) => !unavailableCanonicalIds.has(`${providerFromModelId(modelId)}/${modelId.slice(modelId.indexOf("/") + 1)}`))
         .filter((modelId) => {
           if (modelId === "jev" || modelId === "nineRouter/jev") return true;
           const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
