@@ -1,6 +1,7 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
 import { getSessionModel, sessionKey, setSessionModel } from "@/lib/jev/sessionModels.js";
+import { getCachedJevDecision, setCachedJevDecision } from "@/lib/jev/decisionCache.js";
 import { getModelTier, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
@@ -263,6 +264,28 @@ export async function selectJevModel(body, availableModels, options = {}) {
   if (models.length === 0) return fail("Keine verfügbaren Modelle");
   if (!apiKey) return fail("Jev API Key fehlt");
 
+  // Check decision cache before hitting API
+  const estimatedTokens = body.max_tokens || body.max_completion_tokens || 0;
+  const session = extractSessionContext(body);
+  const sessKey = sessionKey(body);
+  const cached = getCachedJevDecision(sessKey, estimatedTokens, options.cacheJevTtlMs);
+  if (cached && cached.model && models.includes(cached.model)) {
+    options.info?.(`[JEV-CACHE] Hit: ${cached.model} (thinking: ${cached.thinking || "none"})`);
+    updateLastJevRequest({ cachedModel: cached.model, cached: true });
+    recordJevUsage({
+      endpoint: "model-router",
+      caller: options.caller || "model-router",
+      questionType: "choice",
+      status: "cached",
+      httpStatus: 200,
+      latencyMs: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      choice: cached.model,
+    });
+    return cached.model;
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), resolveTimeout(options.timeoutMs));
   const jevStarted = Date.now();
@@ -279,7 +302,6 @@ export async function selectJevModel(body, availableModels, options = {}) {
     fallbackReason: result.fallbackReason,
   });
   try {
-    const session = extractSessionContext(body);
     const criteria = options.enrichCriteria
       ? await buildEnrichedCriteria(models, options, session)
       : buildCriteria(models);
@@ -350,6 +372,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
 
     updateLastJevRequest({ selectedModel: selected });
     setSessionModel(sessionKey(body), selected);
+    setCachedJevDecision(sessKey, estimatedTokens, selected, "", options.cacheJevTtlMs);
     options.info?.(`Jev wählte '${selected}'${session.previousModel === selected ? " (sticky)" : ""}`);
     return selected;
   } catch (error) {

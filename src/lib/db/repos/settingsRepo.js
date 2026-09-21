@@ -58,6 +58,7 @@ const DEFAULT_SETTINGS = {
   jevTimeoutMs: 4500,
   jevDebug: false,
   jevEnrichCriteria: true,
+  cacheJevTtlMs: 10 * 60 * 1000, // 10 minutes cache for Jev decisions per session
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,

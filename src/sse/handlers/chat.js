@@ -163,6 +163,7 @@ export async function handleChat(request, clientRawRequest = null) {
       apiKey: settings.jevApiKey,
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
+      cacheJevTtlMs: settings.cacheJevTtlMs,
       getThinkingLevels,
       providerFromModelId,
       warn: (message) => log.warn("JEV", message),
