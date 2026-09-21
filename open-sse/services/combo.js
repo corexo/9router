@@ -7,6 +7,7 @@ import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
+import { getStickyModel, setStickyPin, clearStickyPin } from "./cacheSessionPin.js";
 const BUILTIN_COMBOS = {
   "local-first": {
     name: "local-first",
@@ -335,6 +336,18 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @returns {Promise<Response>}
  */
 export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
+  // Check if this session has a sticky cache pin (keeps same model for cache hits)
+  const stickyModel = getStickyModel(body, { model: comboName }, models);
+  if (stickyModel) {
+    log.info("COMBO", `Cache sticky pin: reusing ${stickyModel}`);
+    const result = await handleSingleModel(body, stickyModel);
+    if (result.ok) {
+      return result;
+    }
+    // On error, clear pin and fall through to normal retry logic
+    clearStickyPin(body, { model: comboName });
+  }
+
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
 
@@ -364,6 +377,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // Success (2xx) - return response
       if (result.ok) {
         log.info("COMBO", `Model ${modelStr} succeeded`);
+        // Pin this model for cache hits in same session
+        setStickyPin(body, { model: comboName }, modelStr, rotatedModels);
         return result;
       }
 
