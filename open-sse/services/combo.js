@@ -8,16 +8,29 @@ import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
 import { getStickyModel, setStickyPin, clearStickyPin } from "./cacheSessionPin.js";
+// Hardcoded local-first combo with configurable models
+// Set via: LOCAL_FIRST_MODELS="mistral-7b,neural-chat-7b,claude-opus-4.7,glm/glm-5.1"
+function getLocalFirstModels() {
+  const env = process.env.LOCAL_FIRST_MODELS;
+  if (env) {
+    return env.split(",").map(m => m.trim()).filter(m => m.length > 0);
+  }
+  // Fallback defaults if env not set
+  return [
+    "mistral-7b",
+    "neural-chat-7b",
+    "claude-opus-4.7",
+    "glm/glm-5.1"
+  ];
+}
+
 const BUILTIN_COMBOS = {
   "local-first": {
     name: "local-first",
     strategy: "fallback",
-    models: [
-      "custom-provider/macbook-lm-studio",
-      "custom-provider/unsloth",
-      "claude-opus-4.7",
-      "glm/glm-5.1"
-    ]
+    get models() {
+      return getLocalFirstModels();
+    }
   }
 };
 
