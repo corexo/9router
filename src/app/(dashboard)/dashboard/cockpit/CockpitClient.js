@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Chart from "chart.js/auto";
-import { Card, Button, Badge, SegmentedControl, CardSkeleton } from "@/shared/components";
+import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton } from "@/shared/components";
+import CompactQuotaTracker from "./CompactQuotaTracker";
 
 const PERIODS = [
   { value: "today", label: "Heute" },
@@ -53,6 +54,77 @@ export default function CockpitClient() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [accountFilter, setAccountFilter] = useState("all");
   const [togglingId, setTogglingId] = useState(null);
+
+  // Token Saver state
+  const [saverSettings, setSaverSettings] = useState({
+    rtkEnabled: true,
+    cavemanEnabled: false,
+    cavemanLevel: "full",
+    ponytailEnabled: false,
+    ponytailLevel: "full",
+    headroomEnabled: false,
+    headroomUrl: "http://localhost:8787",
+  });
+  const [headroomStatus, setHeadroomStatus] = useState({
+    running: false,
+    installed: false,
+    loading: true,
+  });
+  const [updatingSaver, setUpdatingSaver] = useState(null);
+
+  const loadSaverSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const s = await res.json();
+        setSaverSettings({
+          rtkEnabled: s.rtkEnabled !== false,
+          cavemanEnabled: !!s.cavemanEnabled,
+          cavemanLevel: s.cavemanLevel || "full",
+          ponytailEnabled: !!s.ponytailEnabled,
+          ponytailLevel: s.ponytailLevel || "full",
+          headroomEnabled: !!s.headroomEnabled,
+          headroomUrl: s.headroomUrl || "http://localhost:8787",
+        });
+      }
+    } catch (err) {
+      console.error("[Cockpit] Error loading settings:", err);
+    }
+    try {
+      const hrRes = await fetch("/api/headroom/status", { headers: { "Cache-Control": "no-store" } });
+      if (hrRes.ok) {
+        const hr = await hrRes.json();
+        setHeadroomStatus({
+          running: !!hr.running,
+          installed: !!hr.installed,
+          loading: false,
+        });
+      }
+    } catch {
+      setHeadroomStatus({ running: false, installed: false, loading: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSaverSettings();
+  }, [loadSaverSettings]);
+
+  const handleUpdateSaverSetting = async (patch) => {
+    setSaverSettings((prev) => ({ ...prev, ...patch }));
+    const key = Object.keys(patch)[0];
+    setUpdatingSaver(key);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+    } catch (err) {
+      console.error("[Cockpit] Error updating saver setting:", err);
+    } finally {
+      setUpdatingSaver(null);
+    }
+  };
 
   // Live real-time token stream state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -709,6 +781,222 @@ export default function CockpitClient() {
         </div>
       </Card>
 
+      {/* TOKEN SAVER & COMPRESSION ENGINES */}
+      <Card padding="md" className="border-border/80">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-3 border-b border-border">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <span className="material-symbols-outlined text-[20px]">savings</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-text-main tracking-tight">
+                  Token Saver &amp; Komprimierungs-Engines
+                </h2>
+                <Badge
+                  variant={saverSettings.rtkEnabled || saverSettings.cavemanEnabled || saverSettings.ponytailEnabled || saverSettings.headroomEnabled ? "success" : "outline"}
+                  size="sm"
+                  className="font-mono text-[11px]"
+                >
+                  {saverSettings.rtkEnabled || saverSettings.cavemanEnabled || saverSettings.ponytailEnabled || saverSettings.headroomEnabled ? "AKTIV" : "STANDBY"}
+                </Badge>
+              </div>
+              <p className="text-xs text-text-muted">
+                4 integrierte Technologien zur drastischen Senkung von Input- und Output-Tokens (bis zu 90% Ersparnis)
+              </p>
+            </div>
+          </div>
+          <a
+            href="/dashboard/token-saver"
+            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            <span>Detaillierte Konfiguration &amp; Extras</span>
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </a>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* RTK (Tool Trimmer) */}
+          <div className="p-3.5 rounded-xl bg-surface-2/40 border border-border/60 flex flex-col justify-between hover:border-border transition-all">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <span className="material-symbols-outlined text-[18px]">terminal</span>
+                  </span>
+                  <span className="font-semibold text-text-main text-sm">RTK Tool Trimmer</span>
+                </div>
+                <Toggle
+                  checked={saverSettings.rtkEnabled}
+                  onChange={(val) => handleUpdateSaverSetting({ rtkEnabled: val })}
+                  size="sm"
+                  disabled={updatingSaver === "rtkEnabled"}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  saverSettings.rtkEnabled
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-surface-3 text-text-muted"
+                }`}>
+                  {saverSettings.rtkEnabled ? "60–90% Input-Ersparnis" : "Deaktiviert"}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted leading-relaxed">
+                Filtert und stutzt riesige Tool-Outputs wie <code className="text-[10px] font-mono bg-surface-2 px-1 py-0.5 rounded">git diff</code>, <code className="text-[10px] font-mono bg-surface-2 px-1 py-0.5 rounded">grep</code>, Verzeichnisbäume und Test-Logs, bevor sie das Prompt-Budget belasten.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-border/40 text-[11px] text-text-muted flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] text-amber-500">flash_on</span>
+              <span>Kürzt CLI- &amp; Bash-Ergebnisse</span>
+            </div>
+          </div>
+
+          {/* Headroom (Context Proxy) */}
+          <div className="p-3.5 rounded-xl bg-surface-2/40 border border-border/60 flex flex-col justify-between hover:border-border transition-all">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <span className="material-symbols-outlined text-[18px]">compress</span>
+                  </span>
+                  <span className="font-semibold text-text-main text-sm">Headroom Proxy</span>
+                </div>
+                <Toggle
+                  checked={saverSettings.headroomEnabled}
+                  onChange={(val) => handleUpdateSaverSetting({ headroomEnabled: val })}
+                  size="sm"
+                  disabled={updatingSaver === "headroomEnabled"}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  saverSettings.headroomEnabled
+                    ? (headroomStatus.running ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/15 text-amber-700 dark:text-amber-300")
+                    : "bg-surface-3 text-text-muted"
+                }`}>
+                  {saverSettings.headroomEnabled
+                    ? (headroomStatus.running ? "Aktiv (20–50% Ersparnis)" : "Proxy gestoppt")
+                    : "Deaktiviert"}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted leading-relaxed">
+                Lokaler Kompressions-Proxy für Chatverläufe &amp; Prompts via SmartCrusher (JSON) und AST-Parser für Code ohne semantischen Bedeutungsverlust.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-border/40 text-[11px] text-text-muted flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${headroomStatus.running ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span>Port 8787</span>
+              </span>
+              <a href="/dashboard/token-saver" className="text-primary hover:underline text-[11px]">
+                {headroomStatus.installed ? "Proxy Status" : "Setup"}
+              </a>
+            </div>
+          </div>
+
+          {/* Caveman (Output Compressor) */}
+          <div className="p-3.5 rounded-xl bg-surface-2/40 border border-border/60 flex flex-col justify-between hover:border-border transition-all">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <span className="material-symbols-outlined text-[18px]">short_text</span>
+                  </span>
+                  <span className="font-semibold text-text-main text-sm">Caveman Output</span>
+                </div>
+                <Toggle
+                  checked={saverSettings.cavemanEnabled}
+                  onChange={(val) => handleUpdateSaverSetting({ cavemanEnabled: val })}
+                  size="sm"
+                  disabled={updatingSaver === "cavemanEnabled"}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  saverSettings.cavemanEnabled
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-surface-3 text-text-muted"
+                }`}>
+                  {saverSettings.cavemanEnabled ? "~65% Output-Ersparnis" : "Deaktiviert"}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted leading-relaxed mb-2">
+                Eliminiert Höflichkeitsfloskeln, Begrüßungen und Füllprosa. Zwingt das LLM zu telegrafischen Antworten und purem Code.
+              </p>
+            </div>
+            {saverSettings.cavemanEnabled && (
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center gap-1">
+                {["lite", "full", "ultra"].map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => handleUpdateSaverSetting({ cavemanLevel: lvl })}
+                    className={`flex-1 py-1 rounded text-[10px] font-mono uppercase font-semibold transition-colors ${
+                      saverSettings.cavemanLevel === lvl
+                        ? "bg-purple-600 text-white shadow-sm"
+                        : "bg-surface text-text-muted hover:text-text-main border border-border/40"
+                    }`}
+                    title={lvl === "lite" ? "Ohne Füllwörter, normale Grammatik" : lvl === "full" ? "Keine Artikel/Füllsel, Fragmente erlaubt" : "Telegrafisch, maximale Kompression"}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Ponytail ("Lazy Senior Dev") */}
+          <div className="p-3.5 rounded-xl bg-surface-2/40 border border-border/60 flex flex-col justify-between hover:border-border transition-all">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    <span className="material-symbols-outlined text-[18px]">code</span>
+                  </span>
+                  <span className="font-semibold text-text-main text-sm">Ponytail (Senior Dev)</span>
+                </div>
+                <Toggle
+                  checked={saverSettings.ponytailEnabled}
+                  onChange={(val) => handleUpdateSaverSetting({ ponytailEnabled: val })}
+                  size="sm"
+                  disabled={updatingSaver === "ponytailEnabled"}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                  saverSettings.ponytailEnabled
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-surface-3 text-text-muted"
+                }`}>
+                  {saverSettings.ponytailEnabled ? "YAGNI Code-Bias" : "Deaktiviert"}
+                </span>
+              </div>
+              <p className="text-xs text-text-muted leading-relaxed mb-2">
+                Prägt dem LLM das "Lazy Senior Dev"-Prinzip ein: Wiederverwendung von Standard-Libraries, Löschen von Altlasten statt unnötigem Boilerplate.
+              </p>
+            </div>
+            {saverSettings.ponytailEnabled && (
+              <div className="mt-2 pt-2 border-t border-border/40 flex items-center gap-1">
+                {["lite", "full", "ultra"].map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => handleUpdateSaverSetting({ ponytailLevel: lvl })}
+                    className={`flex-1 py-1 rounded text-[10px] font-mono uppercase font-semibold transition-colors ${
+                      saverSettings.ponytailLevel === lvl
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-surface text-text-muted hover:text-text-main border border-border/40"
+                    }`}
+                    title={lvl === "lite" ? "Minimalistischer, fauler Ansatz" : lvl === "full" ? "Stdlib & Native Funktionen zuerst" : "YAGNI Extremist, Löschen vor Hinzufügen"}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {/* Grid: Jev Intelligent Routing & Cache Performance */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left: Jev Router Details */}
@@ -843,6 +1131,9 @@ export default function CockpitClient() {
           </div>
         </Card>
       </div>
+
+      {/* COMPACT REDESIGNED QUOTA TRACKER */}
+      <CompactQuotaTracker />
 
       {/* Account Steuerung & Kompakte Usage (The Core Interactive Section) */}
       <Card padding="none" className="overflow-hidden">
