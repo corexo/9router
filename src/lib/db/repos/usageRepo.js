@@ -733,6 +733,82 @@ export async function getChartData(period = "7d") {
   });
 }
 
+export async function getTokenFlowData(range = "1h") {
+  const db = await getAdapter();
+  const now = Date.now();
+
+  const CONFIGS = {
+    "1h": { durationMs: 3600000, bucketMs: 60000, count: 60, timeFormat: "time" },
+    "3h": { durationMs: 3 * 3600000, bucketMs: 300000, count: 36, timeFormat: "time" },
+    "6h": { durationMs: 6 * 3600000, bucketMs: 600000, count: 36, timeFormat: "time" },
+    "12h": { durationMs: 12 * 3600000, bucketMs: 1200000, count: 36, timeFormat: "time" },
+    "24h": { durationMs: 24 * 3600000, bucketMs: 1800000, count: 48, timeFormat: "time" },
+    "3d": { durationMs: 3 * 86400000, bucketMs: 7200000, count: 36, timeFormat: "datetime" },
+  };
+
+  const config = CONFIGS[range] || CONFIGS["1h"];
+  const { durationMs, bucketMs, count, timeFormat } = config;
+  const startTime = now - durationMs;
+
+  const labelFn = (ts) => {
+    const d = new Date(ts);
+    if (timeFormat === "datetime") {
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const hours = String(d.getHours()).padStart(2, "0");
+      const mins = String(d.getMinutes()).padStart(2, "0");
+      return `${day}.${month} ${hours}:${mins}`;
+    }
+    const hours = String(d.getHours()).padStart(2, "0");
+    const mins = String(d.getMinutes()).padStart(2, "0");
+    return `${hours}:${mins}`;
+  };
+
+  const buckets = Array.from({ length: count }, (_, i) => {
+    const bucketTs = startTime + i * bucketMs;
+    return {
+      time: labelFn(bucketTs),
+      timestamp: bucketTs,
+      tokensIn: 0,
+      tokensOut: 0,
+      requests: 0,
+    };
+  });
+
+  const rows = db.all(
+    `SELECT timestamp, promptTokens, completionTokens FROM usageHistory WHERE timestamp >= ? ORDER BY id ASC`,
+    [new Date(startTime).toISOString()]
+  );
+
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
+  let totalRequests = 0;
+
+  for (const r of rows) {
+    const t = new Date(r.timestamp).getTime();
+    if (t < startTime || t > now) continue;
+    const idx = Math.min(Math.floor((t - startTime) / bucketMs), count - 1);
+    if (idx >= 0 && idx < count) {
+      const pIn = Number(r.promptTokens || 0);
+      const pOut = Number(r.completionTokens || 0);
+      buckets[idx].tokensIn += pIn;
+      buckets[idx].tokensOut += pOut;
+      buckets[idx].requests += 1;
+      totalTokensIn += pIn;
+      totalTokensOut += pOut;
+      totalRequests += 1;
+    }
+  }
+
+  return {
+    range,
+    totalTokensIn,
+    totalTokensOut,
+    totalRequests,
+    points: buckets,
+  };
+}
+
 function formatLogDate(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;

@@ -13,6 +13,16 @@ const PERIODS = [
   { value: "60d", label: "60 Tage" },
 ];
 
+const TOKEN_FLOW_PERIODS = [
+  { value: "live", label: "Live" },
+  { value: "1h", label: "1 Std" },
+  { value: "3h", label: "3 Std" },
+  { value: "6h", label: "6 Std" },
+  { value: "12h", label: "12 Std" },
+  { value: "24h", label: "24 Std" },
+  { value: "3d", label: "3 Tage" },
+];
+
 function fmtTokens(n) {
   if (n == null || isNaN(n)) return "0";
   if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
@@ -154,6 +164,52 @@ export default function CockpitClient() {
 
   const prevRequestsRef = useRef(new Set());
 
+  // Token flow time-range state ("live" | "1h" | "3h" | "6h" | "12h" | "24h" | "3d")
+  const [flowRange, setFlowRange] = useState("live");
+  const flowRangeRef = useRef("live");
+  const [historicalFlowData, setHistoricalFlowData] = useState(null);
+  const [flowLoading, setFlowLoading] = useState(false);
+
+  useEffect(() => {
+    flowRangeRef.current = flowRange;
+  }, [flowRange]);
+
+  const fetchHistoricalFlow = useCallback(async (range) => {
+    if (range === "live") {
+      setHistoricalFlowData(null);
+      if (liveChartInstance.current) {
+        liveChartInstance.current.data.labels = livePointsRef.current.map((p) => p.time);
+        liveChartInstance.current.data.datasets[0].data = livePointsRef.current.map((p) => p.tokensIn);
+        liveChartInstance.current.data.datasets[1].data = livePointsRef.current.map((p) => p.tokensOut);
+        liveChartInstance.current.update();
+      }
+      return;
+    }
+
+    setFlowLoading(true);
+    try {
+      const res = await fetch(`/api/usage/token-flow?range=${range}`);
+      if (res.ok) {
+        const json = await res.json();
+        setHistoricalFlowData(json);
+        if (liveChartInstance.current && flowRangeRef.current === range) {
+          liveChartInstance.current.data.labels = json.points.map((p) => p.time);
+          liveChartInstance.current.data.datasets[0].data = json.points.map((p) => p.tokensIn);
+          liveChartInstance.current.data.datasets[1].data = json.points.map((p) => p.tokensOut);
+          liveChartInstance.current.update();
+        }
+      }
+    } catch (err) {
+      console.error("[Cockpit] Error loading historical token flow:", err);
+    } finally {
+      setFlowLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistoricalFlow(flowRange);
+  }, [flowRange, fetchHistoricalFlow]);
+
   // Fetch Cockpit data
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -243,7 +299,7 @@ export default function CockpitClient() {
             setLiveRate({ inRate: deltaIn, outRate: deltaOut });
 
             // Update live chart directly
-            if (liveChartInstance.current) {
+            if (liveChartInstance.current && flowRangeRef.current === "live") {
               liveChartInstance.current.data.labels = currentPoints.map((p) => p.time);
               liveChartInstance.current.data.datasets[0].data = currentPoints.map((p) => p.tokensIn);
               liveChartInstance.current.data.datasets[1].data = currentPoints.map((p) => p.tokensOut);
@@ -280,7 +336,7 @@ export default function CockpitClient() {
       });
       livePointsRef.current = currentPoints;
 
-      if (liveChartInstance.current) {
+      if (liveChartInstance.current && flowRangeRef.current === "live") {
         liveChartInstance.current.data.labels = currentPoints.map((p) => p.time);
         liveChartInstance.current.data.datasets[0].data = currentPoints.map((p) => p.tokensIn);
         liveChartInstance.current.data.datasets[1].data = currentPoints.map((p) => p.tokensOut);
@@ -299,9 +355,12 @@ export default function CockpitClient() {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       fetchData(true);
+      if (flowRangeRef.current !== "live") {
+        fetchHistoricalFlow(flowRangeRef.current);
+      }
     }, 10000);
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchData]);
+  }, [autoRefresh, fetchData, fetchHistoricalFlow]);
 
   // Toggle Account Active / Inactive
   const handleToggleAccount = async (account) => {
@@ -366,31 +425,42 @@ export default function CockpitClient() {
     }
 
     const ctx = liveCanvasEl.getContext("2d");
+    const isHistorical = flowRangeRef.current !== "live" && historicalFlowData;
+    const labels = isHistorical
+      ? historicalFlowData.points.map((p) => p.time)
+      : livePointsRef.current.map((p) => p.time);
+    const dataIn = isHistorical
+      ? historicalFlowData.points.map((p) => p.tokensIn)
+      : livePointsRef.current.map((p) => p.tokensIn);
+    const dataOut = isHistorical
+      ? historicalFlowData.points.map((p) => p.tokensOut)
+      : livePointsRef.current.map((p) => p.tokensOut);
+
     liveChartInstance.current = new Chart(ctx, {
       type: "line",
       data: {
-        labels: livePointsRef.current.map((p) => p.time),
+        labels,
         datasets: [
           {
             label: "Tokens IN (Prompt an Jev/Accounts)",
-            data: livePointsRef.current.map((p) => p.tokensIn),
+            data: dataIn,
             borderColor: "#10B981",
             backgroundColor: "rgba(16, 185, 129, 0.15)",
             borderWidth: 2.5,
             fill: true,
             tension: 0.35,
-            pointRadius: 2,
+            pointRadius: isHistorical ? 2.5 : 2,
             pointHoverRadius: 5,
           },
           {
             label: "Tokens OUT (Completion von Accounts)",
-            data: livePointsRef.current.map((p) => p.tokensOut),
+            data: dataOut,
             borderColor: "#6366F1",
             backgroundColor: "rgba(99, 102, 241, 0.15)",
             borderWidth: 2.5,
             fill: true,
             tension: 0.35,
-            pointRadius: 2,
+            pointRadius: isHistorical ? 2.5 : 2,
             pointHoverRadius: 5,
           },
         ],
@@ -609,7 +679,10 @@ export default function CockpitClient() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => fetchData(false)}
+            onClick={() => {
+              fetchData(false);
+              if (flowRange !== "live") fetchHistoricalFlow(flowRange);
+            }}
             disabled={isRefreshing}
             className="flex items-center gap-1.5"
           >
@@ -754,40 +827,73 @@ export default function CockpitClient() {
         </Card>
       </div>
 
-      {/* NEW: LIVE TOKEN STREAMING CHART (Real-Time Throughput) */}
+      {/* TOKEN STREAMING & FLOW TIMELINE CHART */}
       <Card padding="md" className="flex flex-col border-emerald-500/20 bg-gradient-to-b from-surface to-surface-2/30">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
             <div className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+              {flowRange === "live" ? (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+                </>
+              ) : (
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500" />
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-text-main tracking-tight">Live Token Flow Stream</h2>
+                <h2 className="text-base font-bold text-text-main tracking-tight">
+                  {flowRange === "live"
+                    ? "Live Token Flow Stream"
+                    : `Token Flow Verlauf (${TOKEN_FLOW_PERIODS.find((p) => p.value === flowRange)?.label || flowRange})`}
+                </h2>
                 <Badge variant="outline" size="sm" className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                  {liveConnected ? "SSE STREAM AKTIV" : "POLLING AKTIV"}
+                  {flowRange === "live" ? (liveConnected ? "SSE STREAM AKTIV" : "POLLING AKTIV") : `${flowRange.toUpperCase()} VERLAUF`}
                 </Badge>
+                {flowLoading && (
+                  <span className="material-symbols-outlined text-[15px] text-text-muted animate-spin">
+                    progress_activity
+                  </span>
+                )}
               </div>
               <p className="text-xs text-text-muted">
-                Echtzeit-Verfolgung der ein- und ausgehenden Tokens durch Jev und die Accounts
+                {flowRange === "live"
+                  ? "Echtzeit-Verfolgung der ein- und ausgehenden Tokens durch Jev und die Accounts"
+                  : `Historischer Verlauf der Prompt- und Completion-Tokens über ${TOKEN_FLOW_PERIODS.find((p) => p.value === flowRange)?.label || flowRange}`}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-xs font-mono">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-              <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
-              <span>IN: {fmtTokens(liveRate.inRate)} /s</span>
-            </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300">
-              <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
-              <span>OUT: {fmtTokens(liveRate.outRate)} /s</span>
+          <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+            {/* Zeitspannen-Auswahl: Live, 1h, 3h, 6h, 12h, 24h, 3d */}
+            <SegmentedControl
+              options={TOKEN_FLOW_PERIODS}
+              value={flowRange}
+              onChange={setFlowRange}
+              size="sm"
+            />
+
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+                <span>
+                  IN: {fmtTokens(flowRange === "live" ? liveRate.inRate : historicalFlowData?.totalTokensIn || 0)}
+                  {flowRange === "live" ? " /s" : " gesamt"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300">
+                <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+                <span>
+                  OUT: {fmtTokens(flowRange === "live" ? liveRate.outRate : historicalFlowData?.totalTokensOut || 0)}
+                  {flowRange === "live" ? " /s" : " gesamt"}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Live Chart.js Canvas */}
+        {/* Live / Historical Chart.js Canvas */}
         <div className="relative h-[220px] w-full">
           <canvas ref={setLiveCanvasEl} />
         </div>
