@@ -71,3 +71,89 @@ export function getModelTier(bareModel) {
   }
   return best ? best[1] : null;
 }
+
+/**
+ * User-controlled tier preference ("Modell-Klasse" slider in the dashboard).
+ *
+ * Ordered from cheapest/smallest to strongest. Each step restricts which tiers
+ * Jev may choose from and carries a hint that is appended to Jev's instructions.
+ * "balanced" is the neutral default: every tier stays available and Jev decides
+ * purely from the request.
+ */
+export const TIER_PREFERENCES = [
+  {
+    id: "fast",
+    label: "Nur kleine Modelle",
+    tiers: ["fast"],
+    hint: "User preference: ONLY small/fast models. Always pick the cheapest suitable model.",
+  },
+  {
+    id: "eco",
+    label: "Sparsam",
+    tiers: ["fast", "mid"],
+    hint: "User preference: economy mode. Prefer FAST and MID models; larger models are not offered.",
+  },
+  {
+    id: "balanced",
+    label: "Ausgewogen",
+    tiers: ["fast", "mid", "strong", "frontier"],
+    hint: "",
+  },
+  {
+    id: "quality",
+    label: "Starke Modelle",
+    tiers: ["strong", "frontier"],
+    hint: "User preference: quality mode. Only STRONG and FRONTIER models are offered; prefer the higher tier when the task is non-trivial.",
+  },
+  {
+    id: "max",
+    label: "Nur Top-Modelle",
+    tiers: ["frontier"],
+    hint: "User preference: maximum quality. Only FRONTIER models are offered; cost is not a concern.",
+  },
+];
+
+export const DEFAULT_TIER_PREFERENCE = "balanced";
+
+const PREFERENCE_BY_ID = new Map(TIER_PREFERENCES.map((preference) => [preference.id, preference]));
+
+/** Returns the preference id if valid, otherwise null. */
+export function normalizeTierPreference(value) {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return PREFERENCE_BY_ID.has(id) ? id : null;
+}
+
+export function getTierPreference(value) {
+  return PREFERENCE_BY_ID.get(normalizeTierPreference(value) || DEFAULT_TIER_PREFERENCE);
+}
+
+/**
+ * Restrict Jev's candidate pool to the tiers a preference allows.
+ *
+ * - "balanced" (or an unknown value) leaves the pool untouched.
+ * - Models whose tier is unknown are dropped in restricted modes so a
+ *   "small models only" setting can never surface an unclassified frontier model.
+ * - If the filter would empty the pool, the original pool is returned and
+ *   `applied` is false: a preference must never break routing.
+ *
+ * bareModelOf: maps a candidate id ("cc/claude-opus-5") to its bare model name.
+ */
+export function filterModelsByTierPreference(models, value, bareModelOf = defaultBareModelOf) {
+  const preference = getTierPreference(value);
+  const input = Array.isArray(models) ? models : [];
+  if (preference.id === DEFAULT_TIER_PREFERENCE) {
+    return { models: input, applied: false, preference, dropped: 0 };
+  }
+  const allowed = new Set(preference.tiers);
+  const kept = input.filter((modelId) => allowed.has(getModelTier(bareModelOf(modelId))));
+  if (kept.length === 0) {
+    return { models: input, applied: false, preference, dropped: 0 };
+  }
+  return { models: kept, applied: true, preference, dropped: input.length - kept.length };
+}
+
+function defaultBareModelOf(modelId) {
+  const slash = String(modelId).indexOf("/");
+  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
+}

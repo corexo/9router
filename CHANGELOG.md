@@ -1,3 +1,8 @@
+# Unreleased
+
+## Features
+- **Jev / Cockpit**: add a "Modell-Klasse" slider (small models ↔ Fable/Opus) in the Cockpit's Jev card and in Profile → Jev AI Routing. The setting (`jevTierPreference`: `fast` | `eco` | `balanced` | `quality` | `max`) restricts Jev's candidate pool to the allowed quality tiers on every routing decision and appends a matching preference hint to Jev's instructions. `balanced` keeps today's behaviour; a restriction that would empty the pool is ignored so routing never breaks.
+
 # v0.5.81 (2026-09-18)
 
 ## Features

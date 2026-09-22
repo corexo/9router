@@ -17,6 +17,7 @@ export default function CompactQuotaTracker() {
   const [quotasByConn, setQuotasByConn] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingIds, setRefreshingIds] = useState(new Set()); // per-account refresh
   const [filterMode, setFilterMode] = useState("all"); // "all" | "low"
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "table"
   const [selectedProvider, setSelectedProvider] = useState("all");
@@ -91,6 +92,40 @@ export default function CompactQuotaTracker() {
     }
   }, []);
 
+  // Refresh a single connection by fetching live quota from the provider
+  const refreshSingleAccount = useCallback(async (conn) => {
+    setRefreshingIds((prev) => new Set([...prev, conn.id]));
+    try {
+      const qr = await fetch(`/api/usage/${conn.id}?force=1`, { cache: "no-store" });
+      if (!qr.ok) return;
+      const rawJson = await qr.json();
+      const normalized = parseQuotaData(conn.provider, rawJson);
+      if (normalized && normalized.length > 0) {
+        setQuotasByConn((prev) => {
+          const updated = {
+            ...prev,
+            [conn.id]: { quotas: normalized, raw: rawJson, updatedAt: Date.now() },
+          };
+          try {
+            window.localStorage.setItem(
+              QUOTA_CACHE_STORAGE_KEY,
+              JSON.stringify({ quotas: updated, timestamp: Date.now() })
+            );
+          } catch {}
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error("[CompactQuotaTracker] Single refresh failed:", e);
+    } finally {
+      setRefreshingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(conn.id);
+        return next;
+      });
+    }
+  }, []);
+
   useEffect(() => {
     fetchAllQuotas(false);
   }, [fetchAllQuotas]);
@@ -121,6 +156,7 @@ export default function CompactQuotaTracker() {
 
       list.push({
         id: conn.id,
+        conn, // raw connection object — needed for single-account refresh
         name: getConnectionLabel(conn) || conn.name || conn.id,
         provider: conn.provider,
         authType: conn.authType,
@@ -325,12 +361,28 @@ export default function CompactQuotaTracker() {
                     </div>
                   </div>
 
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      acc.isActive ? "bg-emerald-500" : "bg-slate-400"
-                    }`}
-                    title={acc.isActive ? "Aktiv" : "Pausiert"}
-                  />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => refreshSingleAccount(acc.conn)}
+                      disabled={refreshingIds.has(acc.id) || refreshing}
+                      className="p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40"
+                      title="Quota direkt vom Anbieter abrufen"
+                    >
+                      <span
+                        className={`material-symbols-outlined text-[13px] ${
+                          refreshingIds.has(acc.id) ? "animate-spin text-primary" : ""
+                        }`}
+                      >
+                        refresh
+                      </span>
+                    </button>
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        acc.isActive ? "bg-emerald-500" : "bg-slate-400"
+                      }`}
+                      title={acc.isActive ? "Aktiv" : "Pausiert"}
+                    />
+                  </div>
                 </div>
 
                 {/* Quota Limits List */}
@@ -415,6 +467,20 @@ export default function CompactQuotaTracker() {
                           fallbackText={acc.provider.slice(0, 2).toUpperCase()}
                         />
                         <span className="truncate">{acc.name}</span>
+                        <button
+                          onClick={() => refreshSingleAccount(acc.conn)}
+                          disabled={refreshingIds.has(acc.id) || refreshing}
+                          className="ml-auto p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40 shrink-0"
+                          title="Quota direkt vom Anbieter abrufen"
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[12px] ${
+                              refreshingIds.has(acc.id) ? "animate-spin text-primary" : ""
+                            }`}
+                          >
+                            refresh
+                          </span>
+                        </button>
                       </div>
                     </td>
                     <td className="p-2.5 font-mono text-text-muted uppercase text-[11px]">

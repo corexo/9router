@@ -26,6 +26,7 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
+import { filterModelsByTierPreference } from "../services/modelTiers.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess, getModelHealth } from "@/lib/modelHealth.js";
 import { getPricingForModel } from "open-sse/providers/pricing.js";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
@@ -156,6 +157,17 @@ export async function handleChat(request, clientRawRequest = null) {
       if (estimatedTokens > 0 && availableModels.length > 0) {
         log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${jevCombo ? " (Combo 'jev')" : ""}`);
       }
+      // "Modell-Klasse" slider (dashboard): restrict the pool to the tiers the
+      // user allows (small only … frontier only). Applied after the context
+      // filter and before Jev sees the candidates, so a cached decision for a
+      // now-disallowed model is rejected by selectJevModel's pool check too.
+      const tierFilter = filterModelsByTierPreference(availableModels, settings.jevTierPreference);
+      if (tierFilter.applied) {
+        availableModels = tierFilter.models;
+        log.info("JEV", `[9Router-Jev] Modell-Klasse '${tierFilter.preference.id}' (${tierFilter.preference.tiers.join("/")}): ${availableModels.length} Modelle, ${tierFilter.dropped} ausgeschlossen`);
+      } else if (tierFilter.preference.id !== "balanced" && availableModels.length > 0) {
+        log.warn("JEV", `[9Router-Jev] [WARN] Modell-Klasse '${tierFilter.preference.id}' passt zu keinem verfügbaren Modell -> Filter ignoriert`);
+      }
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
     }
@@ -164,6 +176,7 @@ export async function handleChat(request, clientRawRequest = null) {
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
       cacheJevTtlMs: settings.cacheJevTtlMs,
+      tierPreference: settings.jevTierPreference,
       getThinkingLevels,
       providerFromModelId,
       warn: (message) => log.warn("JEV", message),

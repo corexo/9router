@@ -58,6 +58,7 @@ const DEFAULT_SETTINGS = {
   jevTimeoutMs: 4500,
   jevDebug: false,
   jevEnrichCriteria: true,
+  jevTierPreference: "balanced", // fast | eco | balanced | quality | max — "Modell-Klasse" slider for Jev
   cacheJevTtlMs: 10 * 60 * 1000, // 10 minutes cache for Jev decisions per session
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,

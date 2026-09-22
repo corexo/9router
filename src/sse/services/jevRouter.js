@@ -2,7 +2,7 @@ import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage }
 import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
 import { getSessionModel, sessionKey, setSessionModel } from "@/lib/jev/sessionModels.js";
 import { getCachedJevDecision, setCachedJevDecision } from "@/lib/jev/decisionCache.js";
-import { getModelTier, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
+import { getModelTier, getTierPreference, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
@@ -21,6 +21,8 @@ const THINKING_CRITERIA = {
 };
 
 export const JEV_MODEL_ALIASES = new Set(["jev", "nineRouter/jev"]);
+
+const BASE_INSTRUCTIONS = "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.";
 
 function textFromContent(content) {
   if (typeof content === "string") return content;
@@ -306,13 +308,17 @@ export async function selectJevModel(body, availableModels, options = {}) {
       ? await buildEnrichedCriteria(models, options, session)
       : buildCriteria(models);
 
+    // The "Modell-Klasse" slider already narrowed the candidate pool in the
+    // handler; its hint tells Jev how to weigh the remaining options.
+    const tierPreference = getTierPreference(options.tierPreference);
+    const instructions = [BASE_INSTRUCTIONS, tierPreference.hint].filter(Boolean).join(" ");
     const payload = {
       state: buildJevState(body, session),
       model: JEV_MODEL,
       questions: {
         [MODEL_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.",
+          instructions,
           criteria,
         },
       },
@@ -325,6 +331,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
 
       fullPayload: payload,
       enrichCriteria: !!options.enrichCriteria,
+      tierPreference: tierPreference.id,
     }, models.length);
 
     if (options.debug) {

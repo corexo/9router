@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Card, Button, Toggle, Input } from "@/shared/components";
+import { Card, Button, Toggle, Input, JevTierSlider } from "@/shared/components";
 import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
 import { useTheme } from "@/shared/hooks/useTheme";
@@ -80,7 +80,7 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
-  const [jevForm, setJevForm] = useState({ apiKey: "", defaultModel: "", timeoutMs: 1200 });
+  const [jevForm, setJevForm] = useState({ apiKey: "", defaultModel: "", timeoutMs: 1200, tierPreference: "balanced" });
   const [jevStatus, setJevStatus] = useState({ type: "", message: "" });
   const [jevLoading, setJevLoading] = useState(false);
 
@@ -129,6 +129,7 @@ export default function ProfilePage() {
           apiKey: "",
           defaultModel: data?.jevDefaultModel || "",
           timeoutMs: data?.jevTimeoutMs || 1200,
+          tierPreference: data?.jevTierPreference || "balanced",
         });
         setLoading(false);
       })
@@ -247,6 +248,7 @@ export default function ProfilePage() {
           jevApiKey: jevForm.apiKey,
           jevDefaultModel: jevForm.defaultModel.trim(),
           jevTimeoutMs: Math.max(1, Number(jevForm.timeoutMs) || 1200),
+          jevTierPreference: jevForm.tierPreference,
         }),
       });
       const data = await res.json();
@@ -1677,6 +1679,19 @@ export default function ProfilePage() {
                   disabled={loading || jevLoading}
                 />
               </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="font-medium text-sm sm:text-base">Modell-Klasse</label>
+              <div className="p-3 rounded-lg bg-surface-2/40 border border-border/60">
+                <JevTierSlider
+                  value={jevForm.tierPreference}
+                  onChange={(id) => setJevForm((prev) => ({ ...prev, tierPreference: id }))}
+                  disabled={loading || jevLoading}
+                />
+              </div>
+              <p className="text-xs sm:text-sm text-text-muted">
+                Begrenzt, aus welchen Modell-Tiers Jev bei jeder Anfrage wählen darf. Gilt auch im Cockpit.
+              </p>
             </div>
             <Button type="submit" variant="primary" loading={jevLoading} className="w-full sm:w-auto self-start">
               Save Jev settings

@@ -99,6 +99,18 @@ describe("Jev router", () => {
     expect(session.previousModel).toBe("cc/claude-sonnet-5");
   });
 
+  it("appends the tier preference hint to Jev's instructions", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: { target_model: { selected: "openai/gpt-4o" } } }) }));
+    await selectJevModel({ input: "hi" }, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, tierPreference: "max" });
+    const withHint = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.instructions;
+    expect(withHint).toContain("Which model should handle this coding-agent request best?");
+    expect(withHint).toContain("User preference: maximum quality");
+
+    await selectJevModel({ input: "hi" }, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, tierPreference: "balanced" });
+    const balanced = JSON.parse(fetchMock.mock.calls[1][1].body).questions.target_model.instructions;
+    expect(balanced).not.toContain("User preference");
+  });
+
   it("marks the previous model as sticky in enriched criteria", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

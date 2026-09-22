@@ -516,7 +516,6 @@ async function showOpenCodeMenu(port, breadcrumb = []) {
 // ─── Hermes Agent ─────────────────────────────────────────────────────────────
 
 async function buildHermesHeader() {
-  const result = await api.getCliToolSettings("hermes");
   if (!result.success) return `  ${COLORS.red}Failed to load settings${COLORS.reset}`;
 
   const { installed, has9Router, settings } = result.data;
@@ -536,39 +535,6 @@ async function buildHermesHeader() {
   return lines.join("\n");
 }
 
-async function hermesQuickSetup(port) {
-  const { endpoint } = await getEndpoint(port);
-  const apiKey = await getFirstApiKey();
-
-  if (!apiKey) {
-    showStatus("No API keys found. Create one in API Keys menu first.", "error");
-    await pause();
-    return;
-  }
-
-  const model = await selectModelFromList("Select Hermes Model", "", { excludeCombos: true });
-  if (!model) return;
-
-  const result = await api.applyCliToolSettings("hermes", { baseUrl: endpoint, apiKey, model });
-  showStatus(result.success ? "Hermes setup completed!" : `Failed: ${result.error}`, result.success ? "success" : "error");
-  await pause();
-}
-
-async function hermesReset() {
-  const result = await api.resetCliToolSettings("hermes");
-  showStatus(result.success ? "Hermes settings reset!" : `Failed: ${result.error}`, result.success ? "success" : "error");
-  await pause();
-}
-
-async function showHermesMenu(port, breadcrumb = []) {
-  await showMenuWithBack({
-    title: "⚡ Hermes Agent Settings",
-    breadcrumb,
-    headerContent: buildHermesHeader,
-    refresh: async () => ({}),
-    items: [
-      { label: "⚡ Quick Setup", action: async () => { await hermesQuickSetup(port); return true; } },
-      { label: "Reset to Default", action: async () => { await hermesReset(); return true; } }
     ]
   });
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Chart from "chart.js/auto";
-import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton } from "@/shared/components";
+import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton, JevTierSlider } from "@/shared/components";
 import CompactQuotaTracker from "./CompactQuotaTracker";
 
 const PERIODS = [
@@ -81,6 +81,9 @@ export default function CockpitClient() {
     loading: true,
   });
   const [updatingSaver, setUpdatingSaver] = useState(null);
+  // "Modell-Klasse" slider: which tiers Jev may route to (fast … max)
+  const [jevTierPreference, setJevTierPreference] = useState("balanced");
+  const [savingTier, setSavingTier] = useState(false);
 
   const loadSaverSettings = useCallback(async () => {
     try {
@@ -96,6 +99,7 @@ export default function CockpitClient() {
           headroomEnabled: !!s.headroomEnabled,
           headroomUrl: s.headroomUrl || "http://localhost:8787",
         });
+        setJevTierPreference(s.jevTierPreference || "balanced");
       }
     } catch (err) {
       console.error("[Cockpit] Error loading settings:", err);
@@ -133,6 +137,25 @@ export default function CockpitClient() {
       console.error("[Cockpit] Error updating saver setting:", err);
     } finally {
       setUpdatingSaver(null);
+    }
+  };
+
+  const handleUpdateTierPreference = async (id) => {
+    const previous = jevTierPreference;
+    setJevTierPreference(id);
+    setSavingTier(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jevTierPreference: id }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error("[Cockpit] Error updating Jev tier preference:", err);
+      setJevTierPreference(previous);
+    } finally {
+      setSavingTier(false);
     }
   };
 
@@ -1135,6 +1158,24 @@ export default function CockpitClient() {
           </div>
 
           <div className="flex-1 flex flex-col gap-4">
+            {/* Modell-Klasse slider: restricts which tiers Jev may pick */}
+            <div className="p-3 rounded-xl bg-surface-2/40 border border-border/60">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold uppercase text-text-muted tracking-wider">
+                  Modell-Klasse
+                </div>
+                <Badge variant={jevTierPreference === "balanced" ? "outline" : "success"} size="sm" className="font-mono text-[11px]">
+                  {savingTier ? "SPEICHERT…" : jevTierPreference === "balanced" ? "AUTO" : "AKTIV"}
+                </Badge>
+              </div>
+              <JevTierSlider
+                value={jevTierPreference}
+                onChange={handleUpdateTierPreference}
+                disabled={savingTier}
+                compact
+              />
+            </div>
+
             {/* Top Choices */}
             <div>
               <div className="text-xs font-semibold uppercase text-text-muted mb-2 tracking-wider">

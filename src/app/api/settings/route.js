@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { normalizeTierPreference } from "@/sse/services/modelTiers.js";
 import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +76,15 @@ export async function PATCH(request) {
       if (body.jevApiKey === null) body.jevApiKey = "";
       else if (!String(body.jevApiKey).trim()) delete body.jevApiKey;
       else body.jevApiKey = String(body.jevApiKey).trim();
+    }
+
+    // "Modell-Klasse" slider: only known preference ids may be stored.
+    if (Object.prototype.hasOwnProperty.call(body, "jevTierPreference")) {
+      const normalized = normalizeTierPreference(body.jevTierPreference);
+      if (!normalized) {
+        return NextResponse.json({ error: "Invalid jevTierPreference" }, { status: 400 });
+      }
+      body.jevTierPreference = normalized;
     }
 
     if (Object.prototype.hasOwnProperty.call(body, "oidcClientSecret")) {
