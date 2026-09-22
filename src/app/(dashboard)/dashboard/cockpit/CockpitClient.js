@@ -132,14 +132,21 @@ export default function CockpitClient() {
   const [activeAccountPings, setActiveAccountPings] = useState({});
 
   // Chart refs
-  const liveChartCanvasRef = useRef(null);
+  const [liveCanvasEl, setLiveCanvasEl] = useState(null);
   const liveChartInstance = useRef(null);
   const livePointsRef = useRef(
-    Array.from({ length: 30 }, (_, i) => ({
-      time: "",
-      tokensIn: 0,
-      tokensOut: 0,
-    }))
+    Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(Date.now() - (29 - i) * 2500);
+      return {
+        time: d.toLocaleTimeString("de-DE", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }),
+        tokensIn: 0,
+        tokensOut: 0,
+      };
+    })
   );
 
   const cacheChartCanvasRef = useRef(null);
@@ -345,7 +352,7 @@ export default function CockpitClient() {
 
   // Initialize Live Token Flow Chart (Chart.js)
   useEffect(() => {
-    if (!liveChartCanvasRef.current) return;
+    if (!liveCanvasEl) return;
 
     const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
     const textColor = isDark ? "#94A3B8" : "#64748B";
@@ -355,9 +362,10 @@ export default function CockpitClient() {
 
     if (liveChartInstance.current) {
       liveChartInstance.current.destroy();
+      liveChartInstance.current = null;
     }
 
-    const ctx = liveChartCanvasRef.current.getContext("2d");
+    const ctx = liveCanvasEl.getContext("2d");
     liveChartInstance.current = new Chart(ctx, {
       type: "line",
       data: {
@@ -424,15 +432,19 @@ export default function CockpitClient() {
               font: { size: 10 },
             },
             beginAtZero: true,
+            suggestedMax: 10,
           },
         },
       },
     });
 
     return () => {
-      if (liveChartInstance.current) liveChartInstance.current.destroy();
+      if (liveChartInstance.current) {
+        liveChartInstance.current.destroy();
+        liveChartInstance.current = null;
+      }
     };
-  }, []);
+  }, [liveCanvasEl]);
 
   // Initialize Cache timeline Chart (Chart.js)
   useEffect(() => {
@@ -777,7 +789,7 @@ export default function CockpitClient() {
 
         {/* Live Chart.js Canvas */}
         <div className="relative h-[220px] w-full">
-          <canvas ref={liveChartCanvasRef} />
+          <canvas ref={setLiveCanvasEl} />
         </div>
       </Card>
 
