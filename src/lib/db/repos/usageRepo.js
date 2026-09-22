@@ -834,3 +834,281 @@ export async function getJevStats(period = "7d") {
     return { requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, avgLatencyMs: 0, successRate: 100, callers: {}, choices: {}, topChoices: [], series: [] };
   }
 }
+
+export async function getCacheStats(period = "7d") {
+  try {
+    const db = await getAdapter();
+    const now = Date.now();
+
+    const providerNames = {
+      claude: "Claude (Anthropic)",
+      glm: "Z.ai (GLM)",
+      codex: "ChatGPT (OpenAI Codex)",
+      gemini: "Google Gemini",
+      opencode: "OpenCode",
+      ollama: "Ollama",
+      "cloudflare-ai": "Cloudflare AI",
+      github: "GitHub Models",
+      nvidia: "NVIDIA NIM",
+    };
+
+    const providerColors = {
+      claude: "#D97706",
+      glm: "#2563EB",
+      codex: "#10B981",
+      gemini: "#8B5CF6",
+      opencode: "#EC4899",
+      ollama: "#64748B",
+      "cloudflare-ai": "#F97316",
+      github: "#1F2937",
+      nvidia: "#76B900",
+    };
+
+    let totalPromptTokens = 0;
+    let totalCachedTokens = 0;
+    let totalCompletionTokens = 0;
+    let totalRequests = 0;
+    let cachedRequests = 0;
+    let totalCost = 0;
+
+    const providerMap = {};
+    const modelMap = {};
+    let timeSeries = [];
+
+    if (period === "today" || period === "24h") {
+      const bucketCount = 24;
+      const bucketMs = 3600000;
+      let startTime;
+      let endTime;
+      let labelFn;
+
+      if (period === "today") {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        startTime = startOfDay.getTime();
+        endTime = startTime + bucketCount * bucketMs;
+        labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+      } else {
+        startTime = now - bucketCount * bucketMs;
+        endTime = now;
+        labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+      }
+
+      const buckets = Array.from({ length: bucketCount }, (_, i) => ({
+        label: labelFn(startTime + i * bucketMs),
+        promptTokens: 0,
+        cachedTokens: 0,
+        uncachedTokens: 0,
+        hitRate: 0,
+        requests: 0,
+      }));
+
+      const rows = db.all(
+        `SELECT timestamp, provider, model, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ?`,
+        [new Date(startTime).toISOString()]
+      );
+
+      for (const r of rows) {
+        const t = new Date(r.timestamp).getTime();
+        if (t < startTime || t > endTime) continue;
+
+        const tok = parseJson(r.tokens, {}) || {};
+        const cached = Number(tok.cached_tokens || tok.cache_read_input_tokens || 0);
+        const prompt = Number(r.promptTokens || tok.prompt_tokens || tok.input_tokens || 0);
+        const completion = Number(r.completionTokens || tok.completion_tokens || tok.output_tokens || 0);
+        const cost = Number(r.cost || 0);
+        const p = r.provider || "other";
+        const m = r.model || "unknown";
+
+        totalPromptTokens += prompt;
+        totalCachedTokens += cached;
+        totalCompletionTokens += completion;
+        totalRequests += 1;
+        if (cached > 0) cachedRequests += 1;
+        totalCost += cost;
+
+        const idx = Math.min(Math.floor((t - startTime) / bucketMs), bucketCount - 1);
+        if (idx >= 0 && idx < bucketCount) {
+          buckets[idx].promptTokens += prompt;
+          buckets[idx].cachedTokens += cached;
+          buckets[idx].uncachedTokens += Math.max(0, prompt - cached);
+          buckets[idx].requests += 1;
+        }
+
+        if (!providerMap[p]) {
+          providerMap[p] = { promptTokens: 0, cachedTokens: 0, completionTokens: 0, requests: 0, cachedRequests: 0, cost: 0 };
+        }
+        providerMap[p].promptTokens += prompt;
+        providerMap[p].cachedTokens += cached;
+        providerMap[p].completionTokens += completion;
+        providerMap[p].requests += 1;
+        if (cached > 0) providerMap[p].cachedRequests += 1;
+        providerMap[p].cost += cost;
+
+        if (!modelMap[m]) {
+          modelMap[m] = { provider: p, promptTokens: 0, cachedTokens: 0, requests: 0, cachedRequests: 0 };
+        }
+        modelMap[m].promptTokens += prompt;
+        modelMap[m].cachedTokens += cached;
+        modelMap[m].requests += 1;
+        if (cached > 0) modelMap[m].cachedRequests += 1;
+      }
+
+      for (const b of buckets) {
+        b.hitRate = b.promptTokens > 0 ? Number(((b.cachedTokens / b.promptTokens) * 100).toFixed(1)) : 0;
+      }
+      timeSeries = buckets;
+    } else {
+      const bucketCount = period === "30d" ? 30 : period === "60d" ? 60 : 7;
+      const dayRows = loadDaysInRange(db, bucketCount);
+      const dayMap = {};
+      for (const r of dayRows) dayMap[r.dateKey] = parseJson(r.data, {});
+
+      const today = new Date();
+      const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+      timeSeries = Array.from({ length: bucketCount }, (_, i) => {
+        const d = new Date(today);
+        d.setDate(d.getDate() - (bucketCount - 1 - i));
+        const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const day = dayMap[dateKey];
+        const prompt = day?.promptTokens || 0;
+        const cached = day?.cachedTokens || 0;
+        const uncached = Math.max(0, prompt - cached);
+        const hitRate = prompt > 0 ? Number(((cached / prompt) * 100).toFixed(1)) : 0;
+
+        if (day) {
+          totalPromptTokens += prompt;
+          totalCachedTokens += cached;
+          totalCompletionTokens += (day.completionTokens || 0);
+          totalRequests += (day.requests || 0);
+          totalCost += (day.cost || 0);
+
+          for (const [p, s] of Object.entries(day.byProvider || {})) {
+            if (!providerMap[p]) {
+              providerMap[p] = { promptTokens: 0, cachedTokens: 0, requests: 0, cachedRequests: 0, cost: 0 };
+            }
+            providerMap[p].promptTokens += s.promptTokens || 0;
+            providerMap[p].cachedTokens += s.cachedTokens || 0;
+            providerMap[p].requests += s.requests || 0;
+            if ((s.cachedTokens || 0) > 0) providerMap[p].cachedRequests += (s.requests || 0);
+            providerMap[p].cost += s.cost || 0;
+          }
+
+          for (const [mKey, s] of Object.entries(day.byModel || {})) {
+            const rawM = s.meta?.rawModel || mKey.split("|")[0];
+            const p = s.meta?.provider || mKey.split("|")[1] || "";
+            if (!modelMap[rawM]) {
+              modelMap[rawM] = { provider: p, promptTokens: 0, cachedTokens: 0, requests: 0 };
+            }
+            modelMap[rawM].promptTokens += s.promptTokens || 0;
+            modelMap[rawM].cachedTokens += s.cachedTokens || 0;
+            modelMap[rawM].requests += s.requests || 0;
+          }
+        }
+
+        return {
+          label: labelFn(d),
+          dateKey,
+          promptTokens: prompt,
+          cachedTokens: cached,
+          uncachedTokens: uncached,
+          hitRate,
+          requests: day?.requests || 0,
+        };
+      });
+    }
+
+    const byProvider = Object.entries(providerMap)
+      .filter(([_, s]) => s.promptTokens > 0 || s.cachedTokens > 0)
+      .map(([p, s]) => ({
+        provider: p,
+        name: providerNames[p] || p,
+        promptTokens: s.promptTokens,
+        cachedTokens: s.cachedTokens,
+        uncachedTokens: Math.max(0, s.promptTokens - s.cachedTokens),
+        hitRate: s.promptTokens > 0 ? Number(((s.cachedTokens / s.promptTokens) * 100).toFixed(1)) : 0,
+        requests: s.requests,
+        cachedRequests: s.cachedRequests,
+        color: providerColors[p] || "#94A3B8",
+      }))
+      .sort((a, b) => b.cachedTokens - a.cachedTokens);
+
+    const byModel = Object.entries(modelMap)
+      .filter(([_, s]) => s.promptTokens > 0 || s.cachedTokens > 0)
+      .map(([m, s]) => ({
+        model: m,
+        provider: s.provider,
+        promptTokens: s.promptTokens,
+        cachedTokens: s.cachedTokens,
+        uncachedTokens: Math.max(0, s.promptTokens - s.cachedTokens),
+        hitRate: s.promptTokens > 0 ? Number(((s.cachedTokens / s.promptTokens) * 100).toFixed(1)) : 0,
+        requests: s.requests,
+      }))
+      .sort((a, b) => b.cachedTokens - a.cachedTokens)
+      .slice(0, 10);
+
+    let recentRequests = [];
+    try {
+      const rdRows = db.all(`SELECT id, timestamp, provider, model, data FROM requestDetails ORDER BY timestamp DESC LIMIT 20`);
+      recentRequests = rdRows.map((r) => {
+        const d = parseJson(r.data, {}) || {};
+        const tok = d.tokens || {};
+        const cached = Number(tok.cached_tokens || tok.cache_read_input_tokens || 0);
+        const prompt = Number(tok.prompt_tokens || tok.input_tokens || 0);
+        const cacheCreation = Number(tok.cache_creation_input_tokens || 0);
+        const completion = Number(tok.completion_tokens || tok.output_tokens || 0);
+        const hitRate = prompt > 0 && cached > 0 ? Number(((cached / prompt) * 100).toFixed(1)) : 0;
+        return {
+          id: r.id,
+          timestamp: r.timestamp,
+          provider: r.provider,
+          providerName: providerNames[r.provider] || r.provider,
+          model: r.model,
+          promptTokens: prompt,
+          cachedTokens: cached,
+          cacheCreationTokens: cacheCreation,
+          completionTokens: completion,
+          hitRate,
+          isCached: cached > 0,
+          latency: d.latency?.total || 0,
+        };
+      });
+    } catch (e) {
+      console.error("[usageRepo] failed to fetch recentRequests for cache stats:", e);
+    }
+
+    const overallHitRate = totalPromptTokens > 0
+      ? Number(((totalCachedTokens / totalPromptTokens) * 100).toFixed(1))
+      : 0;
+
+    const estimatedSavingsUsd = Number(((totalCachedTokens / 1000000) * 2.7).toFixed(2));
+
+    return {
+      period,
+      summary: {
+        totalPromptTokens,
+        totalCachedTokens,
+        totalCompletionTokens,
+        overallHitRate,
+        totalRequests,
+        cachedRequests,
+        estimatedSavingsUsd,
+      },
+      timeSeries,
+      byProvider,
+      byModel,
+      recentRequests,
+    };
+  } catch (e) {
+    console.error("[usageRepo] getCacheStats failed:", e);
+    return {
+      period,
+      summary: { totalPromptTokens: 0, totalCachedTokens: 0, overallHitRate: 0, totalRequests: 0, cachedRequests: 0, estimatedSavingsUsd: 0 },
+      timeSeries: [],
+      byProvider: [],
+      byModel: [],
+      recentRequests: [],
+    };
+  }
+}
