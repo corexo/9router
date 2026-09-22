@@ -54,9 +54,28 @@ export default function CockpitClient() {
   const [accountFilter, setAccountFilter] = useState("all");
   const [togglingId, setTogglingId] = useState(null);
 
+  // Live real-time token stream state
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [liveRate, setLiveRate] = useState({ inRate: 0, outRate: 0 });
+  const [activeAccountPings, setActiveAccountPings] = useState({});
+
+  // Chart refs
+  const liveChartCanvasRef = useRef(null);
+  const liveChartInstance = useRef(null);
+  const livePointsRef = useRef(
+    Array.from({ length: 30 }, (_, i) => ({
+      time: "",
+      tokensIn: 0,
+      tokensOut: 0,
+    }))
+  );
+
   const cacheChartCanvasRef = useRef(null);
   const cacheChartInstance = useRef(null);
 
+  const prevRequestsRef = useRef(new Set());
+
+  // Fetch Cockpit data
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
@@ -65,6 +84,21 @@ export default function CockpitClient() {
       if (res.ok) {
         const json = await res.json();
         setData(json);
+
+        // Detect new requests to trigger live pulses
+        if (json.recentRequests?.length > 0) {
+          const newPings = {};
+          for (const req of json.recentRequests) {
+            const reqKey = `${req.id || req.timestamp}-${req.model}`;
+            if (!prevRequestsRef.current.has(reqKey)) {
+              prevRequestsRef.current.add(reqKey);
+              if (req.provider) newPings[req.provider] = Date.now();
+            }
+          }
+          if (Object.keys(newPings).length > 0) {
+            setActiveAccountPings((prev) => ({ ...prev, ...newPings }));
+          }
+        }
       }
     } catch (err) {
       console.error("[Cockpit] Error loading cockpit data:", err);
@@ -78,7 +112,110 @@ export default function CockpitClient() {
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh interval (10s)
+  // Live SSE connection for real-time streaming
+  useEffect(() => {
+    let eventSource = null;
+    let fallbackInterval = null;
+
+    try {
+      eventSource = new EventSource("/api/usage/stream");
+      eventSource.onopen = () => {
+        setLiveConnected(true);
+      };
+
+      eventSource.onmessage = (event) => {
+        if (!event.data || event.data.startsWith(":")) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.recentRequests?.length > 0) {
+            let deltaIn = 0;
+            let deltaOut = 0;
+            const nowTime = new Date().toLocaleTimeString("de-DE", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            });
+            const pings = {};
+
+            for (const r of payload.recentRequests.slice(0, 5)) {
+              const rKey = `${r.timestamp}-${r.model}-${r.promptTokens}`;
+              if (!prevRequestsRef.current.has(rKey)) {
+                prevRequestsRef.current.add(rKey);
+                deltaIn += Number(r.promptTokens || 0);
+                deltaOut += Number(r.completionTokens || 0);
+                if (r.provider) pings[r.provider] = Date.now();
+                if (r.connectionId) pings[r.connectionId] = Date.now();
+              }
+            }
+
+            if (Object.keys(pings).length > 0) {
+              setActiveAccountPings((prev) => ({ ...prev, ...pings }));
+            }
+
+            // Push to rolling live points
+            const currentPoints = [...livePointsRef.current];
+            currentPoints.shift();
+            currentPoints.push({
+              time: nowTime,
+              tokensIn: deltaIn,
+              tokensOut: deltaOut,
+            });
+            livePointsRef.current = currentPoints;
+            setLiveRate({ inRate: deltaIn, outRate: deltaOut });
+
+            // Update live chart directly
+            if (liveChartInstance.current) {
+              liveChartInstance.current.data.labels = currentPoints.map((p) => p.time);
+              liveChartInstance.current.data.datasets[0].data = currentPoints.map((p) => p.tokensIn);
+              liveChartInstance.current.data.datasets[1].data = currentPoints.map((p) => p.tokensOut);
+              liveChartInstance.current.update("none");
+            }
+          }
+        } catch {
+          // JSON parse error ignore
+        }
+      };
+
+      eventSource.onerror = () => {
+        setLiveConnected(false);
+      };
+    } catch {
+      setLiveConnected(false);
+    }
+
+    // Secondary ticker (every 2 seconds pushes tick so graph slides smoothly)
+    fallbackInterval = setInterval(() => {
+      const nowTime = new Date().toLocaleTimeString("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      const currentPoints = [...livePointsRef.current];
+      // Only push zero tick if no new tokens arrived in last tick
+      currentPoints.shift();
+      currentPoints.push({
+        time: nowTime,
+        tokensIn: 0,
+        tokensOut: 0,
+      });
+      livePointsRef.current = currentPoints;
+
+      if (liveChartInstance.current) {
+        liveChartInstance.current.data.labels = currentPoints.map((p) => p.time);
+        liveChartInstance.current.data.datasets[0].data = currentPoints.map((p) => p.tokensIn);
+        liveChartInstance.current.data.datasets[1].data = currentPoints.map((p) => p.tokensOut);
+        liveChartInstance.current.update("none");
+      }
+    }, 2500);
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (fallbackInterval) clearInterval(fallbackInterval);
+    };
+  }, []);
+
+  // Periodic cockpit refresh (10s)
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
@@ -113,10 +250,7 @@ export default function CockpitClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: newActiveState }),
       });
-      if (!res.ok) {
-        // Revert on error
-        throw new Error("Failed to update status");
-      }
+      if (!res.ok) throw new Error("Failed to update status");
     } catch (err) {
       console.error("[Cockpit] Error toggling account:", err);
       // Revert optimistic update
@@ -137,7 +271,98 @@ export default function CockpitClient() {
     }
   };
 
-  // Render / update Chart.js instance for Cache timeline
+  // Initialize Live Token Flow Chart (Chart.js)
+  useEffect(() => {
+    if (!liveChartCanvasRef.current) return;
+
+    const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+    const textColor = isDark ? "#94A3B8" : "#64748B";
+    const gridColor = isDark ? "rgba(255, 255, 255, 0.07)" : "rgba(0, 0, 0, 0.06)";
+    const tooltipBg = isDark ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.98)";
+    const tooltipText = isDark ? "#F8FAFC" : "#0F172A";
+
+    if (liveChartInstance.current) {
+      liveChartInstance.current.destroy();
+    }
+
+    const ctx = liveChartCanvasRef.current.getContext("2d");
+    liveChartInstance.current = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: livePointsRef.current.map((p) => p.time),
+        datasets: [
+          {
+            label: "Tokens IN (Prompt an Jev/Accounts)",
+            data: livePointsRef.current.map((p) => p.tokensIn),
+            borderColor: "#10B981",
+            backgroundColor: "rgba(16, 185, 129, 0.15)",
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+          },
+          {
+            label: "Tokens OUT (Completion von Accounts)",
+            data: livePointsRef.current.map((p) => p.tokensOut),
+            borderColor: "#6366F1",
+            backgroundColor: "rgba(99, 102, 241, 0.15)",
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 300 },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: {
+            position: "top",
+            labels: { color: textColor, usePointStyle: true, font: { size: 11 } },
+          },
+          tooltip: {
+            backgroundColor: tooltipBg,
+            titleColor: tooltipText,
+            bodyColor: tooltipText,
+            padding: 10,
+            callbacks: {
+              label(context) {
+                const label = context.dataset.label?.split(" ")[0] || "";
+                const val = context.parsed.y || 0;
+                return ` ${label}: ${Number(val).toLocaleString()} Tokens`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: gridColor },
+            ticks: { color: textColor, font: { size: 10 }, maxTicksLimit: 8 },
+          },
+          y: {
+            grid: { color: gridColor },
+            ticks: {
+              color: textColor,
+              callback: (v) => fmtTokens(v),
+              font: { size: 10 },
+            },
+            beginAtZero: true,
+          },
+        },
+      },
+    });
+
+    return () => {
+      if (liveChartInstance.current) liveChartInstance.current.destroy();
+    };
+  }, []);
+
+  // Initialize Cache timeline Chart (Chart.js)
   useEffect(() => {
     if (!data?.cache?.timeSeries?.length || loading) return;
 
@@ -203,7 +428,7 @@ export default function CockpitClient() {
           plugins: {
             legend: {
               position: "top",
-              labels: { color: textColor, usePointStyle: true, font: { size: 11 } },
+              labels: { color: textColor, usePointStyle: true, font: { size: 10 } },
             },
             tooltip: {
               backgroundColor: tooltipBg,
@@ -285,7 +510,7 @@ export default function CockpitClient() {
             <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" title="Live System" />
           </div>
           <p className="text-sm text-text-muted mt-0.5">
-            Zentrales Dashboard für Jev Router, Cache-Effizienz und Account-Steuerung
+            Zentrales Dashboard für Live-Tokenfluss, Jev Router, Cache-Effizienz und Account-Steuerung
           </p>
         </div>
 
@@ -444,6 +669,45 @@ export default function CockpitClient() {
           </div>
         </Card>
       </div>
+
+      {/* NEW: LIVE TOKEN STREAMING CHART (Real-Time Throughput) */}
+      <Card padding="md" className="flex flex-col border-emerald-500/20 bg-gradient-to-b from-surface to-surface-2/30">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-text-main tracking-tight">Live Token Flow Stream</h2>
+                <Badge variant="outline" size="sm" className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                  {liveConnected ? "SSE STREAM AKTIV" : "POLLING AKTIV"}
+                </Badge>
+              </div>
+              <p className="text-xs text-text-muted">
+                Echtzeit-Verfolgung der ein- und ausgehenden Tokens durch Jev und die Accounts
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+              <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+              <span>IN: {fmtTokens(liveRate.inRate)} /s</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300">
+              <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+              <span>OUT: {fmtTokens(liveRate.outRate)} /s</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Chart.js Canvas */}
+        <div className="relative h-[220px] w-full">
+          <canvas ref={liveChartCanvasRef} />
+        </div>
+      </Card>
 
       {/* Grid: Jev Intelligent Routing & Cache Performance */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -649,6 +913,9 @@ export default function CockpitClient() {
               {filteredAccounts.map((account) => {
                 const isToggling = togglingId === account.id;
                 const pColor = PROVIDER_COLORS[account.provider] || "#94A3B8";
+                const isRecentlyActive =
+                  activeAccountPings[account.id] &&
+                  Date.now() - activeAccountPings[account.id] < 15000;
 
                 return (
                   <tr
@@ -662,7 +929,11 @@ export default function CockpitClient() {
                       <div className="flex items-center gap-2.5">
                         <span
                           className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                            account.isActive ? "bg-emerald-500" : "bg-slate-400"
+                            account.isActive
+                              ? isRecentlyActive
+                                ? "bg-emerald-400 animate-ping"
+                                : "bg-emerald-500"
+                              : "bg-slate-400"
                           }`}
                         />
                         <div>
@@ -671,6 +942,11 @@ export default function CockpitClient() {
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-surface-2 border border-border/60 text-text-muted uppercase font-mono">
                               {account.authType}
                             </span>
+                            {isRecentlyActive && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono animate-pulse">
+                                LIVE FLOW
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-text-muted font-mono truncate max-w-[220px]">
                             {account.id}
