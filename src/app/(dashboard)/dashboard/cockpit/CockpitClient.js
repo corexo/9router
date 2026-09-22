@@ -246,7 +246,7 @@ export default function CockpitClient() {
 
     try {
       const res = await fetch(`/api/providers/${account.id}`, {
-        method: "PATCH",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: newActiveState }),
       });
