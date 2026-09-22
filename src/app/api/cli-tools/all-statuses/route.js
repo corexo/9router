@@ -6,7 +6,6 @@ import { GET as codexGet } from "../codex-settings/route";
 import { GET as opencodeGet } from "../opencode-settings/route";
 import { GET as droidGet } from "../droid-settings/route";
 import { GET as openclawGet } from "../openclaw-settings/route";
-import { GET as hermesGet } from "../hermes-settings/route";
 import { GET as coworkGet } from "../cowork-settings/route";
 import { GET as clineGet } from "../cline-settings/route";
 import { GET as kiloGet } from "../kilo-settings/route";
@@ -21,7 +20,6 @@ const STATUS_GETTERS = {
   opencode: opencodeGet,
   droid: droidGet,
   openclaw: openclawGet,
-  hermes: hermesGet,
   cowork: coworkGet,
   cline: clineGet,
   kilo: kiloGet,
