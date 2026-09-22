@@ -1112,3 +1112,128 @@ export async function getCacheStats(period = "7d") {
     };
   }
 }
+
+export async function getCockpitData(period = "7d") {
+  try {
+    const [jevStats, cacheStats] = await Promise.all([
+      getJevStats(period),
+      getCacheStats(period),
+    ]);
+
+    const { getProviderConnections } = await import("./connectionsRepo.js");
+    const connections = await getProviderConnections();
+
+    const db = await getAdapter();
+    const accountUsage = {};
+
+    if (period === "today" || period === "24h") {
+      const bucketMs = period === "today" ? (Date.now() - new Date().setHours(0, 0, 0, 0)) : (24 * 3600000);
+      const since = new Date(Date.now() - bucketMs).toISOString();
+      const rows = db.all(
+        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL`,
+        [since]
+      );
+      for (const r of rows) {
+        const cId = r.connectionId;
+        if (!accountUsage[cId]) {
+          accountUsage[cId] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+        }
+        const tok = parseJson(r.tokens, {}) || {};
+        const cached = Number(tok.cached_tokens || tok.cache_read_input_tokens || 0);
+        const prompt = Number(r.promptTokens || tok.prompt_tokens || tok.input_tokens || 0);
+        const completion = Number(r.completionTokens || tok.completion_tokens || tok.output_tokens || 0);
+        accountUsage[cId].requests += 1;
+        accountUsage[cId].promptTokens += prompt;
+        accountUsage[cId].completionTokens += completion;
+        accountUsage[cId].cachedTokens += cached;
+        accountUsage[cId].cost += Number(r.cost || 0);
+      }
+    } else {
+      const bucketCount = period === "30d" ? 30 : period === "60d" ? 60 : 7;
+      const dayRows = loadDaysInRange(db, bucketCount);
+      for (const r of dayRows) {
+        const day = parseJson(r.data, {});
+        for (const [cId, s] of Object.entries(day.byAccount || {})) {
+          if (!accountUsage[cId]) {
+            accountUsage[cId] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+          }
+          accountUsage[cId].requests += (s.requests || 0);
+          accountUsage[cId].promptTokens += (s.promptTokens || 0);
+          accountUsage[cId].completionTokens += (s.completionTokens || 0);
+          accountUsage[cId].cachedTokens += (s.cachedTokens || 0);
+          accountUsage[cId].cost += (s.cost || 0);
+        }
+      }
+    }
+
+    const accounts = connections.map((c) => {
+      const u = accountUsage[c.id] || { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+      const prompt = u.promptTokens || 0;
+      const cached = u.cachedTokens || 0;
+      const hitRate = prompt > 0 ? Number(((cached / prompt) * 100).toFixed(1)) : 0;
+      return {
+        id: c.id,
+        name: c.name || c.email || c.id,
+        provider: c.provider,
+        authType: c.authType,
+        priority: c.priority ?? 1,
+        isActive: Boolean(c.isActive),
+        requests: u.requests,
+        promptTokens: prompt,
+        cachedTokens: cached,
+        completionTokens: u.completionTokens,
+        cost: Number(u.cost.toFixed(4)),
+        hitRate,
+      };
+    }).sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return b.requests - a.requests;
+    });
+
+    const activeAccountsCount = accounts.filter((a) => a.isActive).length;
+
+    return {
+      period,
+      kpis: {
+        jevDecisions: jevStats.requests,
+        jevSuccessRate: jevStats.successRate,
+        jevFallbacks: jevStats.fallbacks,
+        jevAvgLatencyMs: jevStats.avgLatencyMs,
+        cacheHitRate: cacheStats.summary.overallHitRate,
+        totalCachedTokens: cacheStats.summary.totalCachedTokens,
+        totalPromptTokens: cacheStats.summary.totalPromptTokens,
+        totalRequests: cacheStats.summary.totalRequests,
+        estimatedSavingsUsd: cacheStats.summary.estimatedSavingsUsd,
+        activeAccountsCount,
+        totalAccountsCount: accounts.length,
+      },
+      jev: {
+        requests: jevStats.requests,
+        successRate: jevStats.successRate,
+        fallbacks: jevStats.fallbacks,
+        avgLatencyMs: jevStats.avgLatencyMs,
+        topChoices: jevStats.topChoices,
+        callers: jevStats.callers,
+        series: jevStats.series,
+      },
+      cache: {
+        summary: cacheStats.summary,
+        timeSeries: cacheStats.timeSeries,
+        byProvider: cacheStats.byProvider,
+      },
+      accounts,
+      recentRequests: cacheStats.recentRequests.slice(0, 10),
+    };
+  } catch (e) {
+    console.error("[usageRepo] getCockpitData failed:", e);
+    return {
+      period,
+      kpis: { jevDecisions: 0, jevSuccessRate: 100, jevFallbacks: 0, jevAvgLatencyMs: 0, cacheHitRate: 0, totalCachedTokens: 0, totalPromptTokens: 0, totalRequests: 0, estimatedSavingsUsd: 0, activeAccountsCount: 0, totalAccountsCount: 0 },
+      jev: { requests: 0, successRate: 100, fallbacks: 0, avgLatencyMs: 0, topChoices: [], callers: {}, series: [] },
+      cache: { summary: {}, timeSeries: [], byProvider: [] },
+      accounts: [],
+      recentRequests: [],
+    };
+  }
+}
