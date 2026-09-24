@@ -155,7 +155,8 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = (providerId === "cursor" || providerId === "zed") && liveModels.length > 0
+  const usesLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codex";
+  const models = usesLiveCatalog && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -473,8 +474,10 @@ export default function ProviderDetailPage() {
   // no usable list, so resolve from the active connection. Fires only when
   // the provider id or connection list changes — no polling, no loop.
   // Cursor path is statement-identical to before; zed adds error surfacing.
+  // Codex: the API merges live discovery with the static registry (display
+  // only — discovered ids are flagged and never enter enabledModels/routing).
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed";
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codex";
     if (!isLiveCatalog) {
       setLiveModels([]);
       return;
@@ -501,12 +504,17 @@ export default function ProviderDetailPage() {
         if (providerId === "zed") {
           setLiveModels([]);
           setLiveModelsError(data?.warning || data?.error || "Zed returned no live models.");
+        } else if (providerId === "codex") {
+          setLiveModels([]);
         }
       })
       .catch(() => {
-        if (!cancelled && providerId === "zed") {
+        if (cancelled) return;
+        if (providerId === "zed") {
           setLiveModels([]);
           setLiveModelsError("Failed to reach the Zed model catalog.");
+        } else if (providerId === "codex") {
+          setLiveModels([]);
         }
       });
 
@@ -1215,6 +1223,7 @@ export default function ProviderDetailPage() {
           const existingAlias = Object.entries(modelAliases).find(
             ([, m]) => m === fullModel || m === oldFormatModel
           )?.[0];
+          const isDiscovered = model.source === "discovered";
           return (
             <ModelRow
               key={model.id}
@@ -1229,7 +1238,8 @@ export default function ProviderDetailPage() {
               onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
-              onDisable={() => handleDisableModel(model.id)}
+              isDiscovered={isDiscovered}
+              onDisable={isDiscovered ? undefined : () => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
             />

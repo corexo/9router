@@ -15,6 +15,7 @@ import { resolveClinepassModels, resolveClineModels } from "open-sse/services/cl
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 import { resolveZedModels } from "open-sse/shared/zedAuth.js";
+import { resolveCodexLiveModels, mergeCodexModelsWithRegistry } from "open-sse/services/codexModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
@@ -519,6 +520,46 @@ export async function buildModelsList(kindFilter, options = {}) {
         models.push(model);
       }
 
+      // Codex display-only discovered models (opt-in via ?includeDiscovered=codex):
+      // appended straight to the output list, deliberately NOT via
+      // LIVE_MODEL_RESOLVERS / rawModelIds so unverified ids never become routable.
+      if (
+        providerId === "codex"
+        && !hasExplicitEnabledModels
+        && (options.includeDiscovered || []).includes("codex")
+      ) {
+        try {
+          const live = await resolveCodexLiveModels(
+            { accessToken: conn.accessToken, refreshToken: conn.refreshToken },
+            {
+              log: console,
+              onCredentialsRefreshed: async (refreshed) => {
+                await updateProviderCredentials(conn.id, {
+                  ...refreshed,
+                  existingProviderSpecificData: conn.providerSpecificData || {},
+                });
+              },
+            },
+          );
+          const merged = mergeCodexModelsWithRegistry(live.models, providerModels);
+          for (const model of merged) {
+            if (model.source !== "discovered") continue;
+            const kind = staticModelKindById.get(model.id) || inferKindFromUnknownModelId(model.id);
+            if (!kindFilter.includes(kind)) continue;
+            if (isDisabled(outputAlias, model.id) || isDisabled(staticAlias, model.id)) continue;
+            models.push({
+              id: `${outputAlias}/${model.id}`,
+              object: "model",
+              owned_by: outputAlias,
+              source: "discovered",
+              verified: false,
+            });
+          }
+        } catch (err) {
+          console.log(`Codex discovered-models fetch failed for ${providerId}: ${err?.message || err}`);
+        }
+      }
+
       // Web search/fetch — provider IS the model, expose as {alias}/search and/or {alias}/fetch with explicit kind
       const providerInfo = AI_PROVIDERS[providerId];
       if (kindFilter.includes("webSearch") && providerInfo?.searchConfig) {
@@ -594,7 +635,13 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
+    const includeDiscovered = (request?.url
+      ? new URL(request.url).searchParams.get("includeDiscovered")
+      : "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, includeDiscovered });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });
