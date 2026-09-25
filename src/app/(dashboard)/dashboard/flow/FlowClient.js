@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { buildPath, pathColor } from "./path.js";
 
 // --- Mesh-Definition: 9Router Request-Tunnel (feste Phasen) ---
 const N = [
@@ -53,21 +54,6 @@ function geo(e) {
   return { d: `M${sx},${sy} C${sx + t},${sy} ${ex - t},${ey} ${ex},${ey}`, mx: (sx + ex) / 2, my: (sy + ey) / 2 };
 }
 
-// --- Request → Pfad: aus echten RequestDetails abgeleitet ---
-function buildPath(d) {
-  const p = ["http", "gateway", "auth", "engine"];
-  if (d.status === "error") { p.push("error"); return p; }
-  if (d.cached) p.push("cache");
-  p.push("ai");
-  p.push(d.stream ? "stream" : "ok");
-  return p;
-}
-function pathColor(d) {
-  if (d.status === "error") return "#fb7185";
-  if (d.stream) return "#fbbf24";
-  if (d.cached) return "#34d399";
-  return "#60a5fa";
-}
 
 export default function FlowClient() {
   const [reqs, setReqs] = useState([]);
@@ -77,6 +63,7 @@ export default function FlowClient() {
   const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
+    setSelIdx("");
     try {
       const res = await fetch("/api/usage/request-details?pageSize=50");
       const json = await res.json();
@@ -123,7 +110,8 @@ export default function FlowClient() {
     return () => { stop = true; };
   }, [path, sel]);
 
-  if (err && !loaded) return <div className="p-8 text-red-400">Fehler beim Laden: {err}</div>;
+  const noReqs = loaded && !err && reqs.length === 0;
+  if (err) return <div className="p-8 text-red-400">Fehler beim Laden der Requests: {err}</div>;
 
   return (
     <div className="p-4">
@@ -136,7 +124,7 @@ export default function FlowClient() {
             className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white min-w-[380px]"
           >
             <option value="" disabled>
-              {reqs.length ? "Request wählen…" : "Keine Requests in DB"}
+              {noReqs ? "Keine Requests in DB" : "Lade…"}
             </option>
             {reqs.map((r) => (
               <option key={r.i} value={r.i}>
