@@ -91,6 +91,17 @@ export function setCachedJevDecision(sessionId, estimatedTokens, model, thinking
 }
 
 /**
+ * Clear cached decisions for a specific model (e.g. after a 413 or error).
+ */
+export function clearCachedJevDecisionByModel(model) {
+  if (!model) return;
+  const cache = store();
+  for (const [k, v] of cache.entries()) {
+    if (v.model === model) cache.delete(k);
+  }
+}
+
+/**
  * Clear all cached decisions (for testing or reset).
  */
 export function clearJevDecisionCache() {

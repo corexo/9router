@@ -59,6 +59,7 @@ const DEFAULT_SETTINGS = {
   jevDebug: false,
   jevEnrichCriteria: true,
   jevTierPreference: "balanced", // fast | eco | balanced | quality | max — "Modell-Klasse" slider for Jev
+  jevExcludeLocalModels: true, // true = exclude models listed in 'local-first' combo from Jev model selection
   cacheJevTtlMs: 10 * 60 * 1000, // 10 minutes cache for Jev decisions per session
   jevProxyTimeoutMs: 5000,
   headroomEnabled: false,

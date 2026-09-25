@@ -906,6 +906,7 @@ export async function getJevStats(period = "7d") {
     stats.avgLatencyMs = stats.latencyCount ? Math.round(stats.latencySumMs / stats.latencyCount) : 0;
     stats.successRate = stats.requests ? Math.round((stats.success / stats.requests) * 100) : 100;
     stats.topChoices = Object.entries(stats.choices).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([model, count]) => ({ model, count }));
+    stats.choices = stats.choices;
     return stats;
   } catch (e) {
     console.error("[usageRepo] getJevStats failed:", e.message);
@@ -1292,6 +1293,7 @@ export async function getCockpitData(period = "7d") {
         fallbacks: jevStats.fallbacks,
         avgLatencyMs: jevStats.avgLatencyMs,
         topChoices: jevStats.topChoices,
+        choices: jevStats.choices || {},
         callers: jevStats.callers,
         series: jevStats.series,
       },

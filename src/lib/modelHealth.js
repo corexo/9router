@@ -33,7 +33,7 @@ export function classifyModelFailure(status, message = "") {
     return { type: "incompatible", scope: "cooldown" };
   }
   
-  // Context overflow: blame request, not model
+  // Context overflow: 413 / context window exceeded → 30min cooldown so Jev/combos don't keep looping on a model whose context is exceeded
   if (
     status === 413 ||
     text.includes("context window limit") ||
@@ -41,7 +41,7 @@ export function classifyModelFailure(status, message = "") {
     text.includes("too many tokens") ||
     (text.includes("token") && (text.includes("exceed") || text.includes("exceeds")))
   ) {
-    return { type: "context_limit", scope: "request" };
+    return { type: "context_limit", scope: "cooldown" };
   }
   
   // Schema incompatibility

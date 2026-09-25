@@ -6,8 +6,6 @@ import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
-import HeaderLanguage from "@/shared/components/HeaderLanguage";
-import ThemeToggle from "@/shared/components/ThemeToggle";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -178,7 +176,7 @@ const getPageInfo = (pathname) => {
   return { title: "", description: "", breadcrumbs: [] };
 };
 
-export default function Header({ onMenuClick, showMenuButton = true }) {
+export default function Header({ onMenuClick, showMenuButton = true, onToggleSidebar, isSidebarCollapsed }) {
   const pathname = usePathname();
   const [displayName, setDisplayName] = useState("");
   const [loginMethod, setLoginMethod] = useState("");
@@ -226,14 +224,27 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
 
   return (
     <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
-      {/* Mobile menu button */}
-      <div className="flex items-center gap-3 lg:hidden shrink-0">
+      {/* Mobile menu button & Desktop Sidebar Toggle */}
+      <div className="flex items-center gap-2 shrink-0">
         {showMenuButton && (
           <button
             onClick={onMenuClick}
-            className="text-text-main hover:text-primary transition-colors"
+            className="text-text-main hover:text-primary transition-colors lg:hidden"
+            aria-label="Menü öffnen"
           >
             <span className="material-symbols-outlined">menu</span>
+          </button>
+        )}
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title={isSidebarCollapsed ? "Sidebar einblenden" : "Sidebar minimieren"}
+            className="hidden lg:flex items-center justify-center p-1.5 rounded-lg text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors"
+          >
+            <span className="material-symbols-outlined text-[20px]">
+              {isSidebarCollapsed ? "dock_to_right" : "dock_to_left"}
+            </span>
           </button>
         )}
       </div>
@@ -314,8 +325,6 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           </div>
         )}
         <HeaderSearch />
-        <ThemeToggle />
-        <HeaderLanguage />
         <HeaderMenu onLogout={handleLogout} />
       </div>
     </header>
@@ -359,4 +368,6 @@ function HeaderSearch() {
 Header.propTypes = {
   onMenuClick: PropTypes.func,
   showMenuButton: PropTypes.bool,
+  onToggleSidebar: PropTypes.func,
+  isSidebarCollapsed: PropTypes.bool,
 };

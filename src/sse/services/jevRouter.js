@@ -1,13 +1,15 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
-import { logJevRequest, updateLastJevRequest } from "@/lib/jev/requestLog.js";
+import { logJevRequest, patchJevTrace, updateLastJevRequest } from "@/lib/jev/requestLog.js";
 import { getSessionModel, sessionKey, setSessionModel } from "@/lib/jev/sessionModels.js";
 import { getCachedJevDecision, setCachedJevDecision } from "@/lib/jev/decisionCache.js";
+import { touchSessionCache } from "@/lib/jev/sessionCache.js";
 import { getModelTier, getTierPreference, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
 const JEV_MODEL = "jev-1.13.0";
 const DEFAULT_TIMEOUT_MS = 4500;
+const RESPONSE_CAP_CHARS = 32 * 1024; // Jev Inspector: cap stored raw response per trace
 const MAX_PROMPT_LENGTH = 3000;
 // Generic scale offered to Jev before we know which model it will pick;
 // resolveThinkingSuffix() below clamps the answer to what the chosen model actually supports.
@@ -21,8 +23,11 @@ const THINKING_CRITERIA = {
 };
 
 export const JEV_MODEL_ALIASES = new Set(["jev", "nineRouter/jev"]);
+// jev-1m: same Jev routing flow, but the handler narrows the pool to
+// big-context models (KV-cache-friendly append-only sessions).
+export const JEV1M_MODEL_ALIASES = new Set(["jev-1m", "nineRouter/jev-1m"]);
 
-const BASE_INSTRUCTIONS = "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.";
+const BASE_INSTRUCTIONS = "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. When tiers are equal or sufficient, prefer zero-cost local/flat-rate models over paid models. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.";
 
 function textFromContent(content) {
   if (typeof content === "string") return content;
@@ -253,13 +258,17 @@ function resolveThinkingSuffix(rawLevel, chosenModel, options) {
  * by the caller (real capabilities registry in production, mocks in tests).
  */
 export async function selectJevModel(body, availableModels, options = {}) {
-  const models = [...new Set(availableModels)].filter((model) => !JEV_MODEL_ALIASES.has(model));
+  const models = [...new Set(availableModels)].filter(
+    (model) => !JEV_MODEL_ALIASES.has(model) && !JEV1M_MODEL_ALIASES.has(model),
+  );
   const apiKey = options.apiKey || process.env.TYPESAFE_API_KEY || "";
   const fallback = options.defaultModel || process.env.JEV_ROUTER_DEFAULT_MODEL || models[0];
   const warn = options.warn || console.warn;
+  // Trace-aware patch: with concurrent requests updateLastJevRequest could patch the wrong entry.
+  const patchTrace = (patch) => (options.traceId ? patchJevTrace(options.traceId, patch) : updateLastJevRequest(patch));
   const fail = (reason) => {
     warn(`[9Router-Jev] [WARN] ${reason} -> Fallback: ${fallback}`);
-    updateLastJevRequest({ fallbackUsed: fallback, fallbackReason: reason });
+    patchTrace({ fallbackUsed: fallback, fallbackReason: reason });
     return fallback;
   };
 
@@ -273,7 +282,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
   const cached = getCachedJevDecision(sessKey, estimatedTokens, options.cacheJevTtlMs);
   if (cached && cached.model && models.includes(cached.model)) {
     options.info?.(`[JEV-CACHE] Hit: ${cached.model} (thinking: ${cached.thinking || "none"})`);
-    updateLastJevRequest({ cachedModel: cached.model, cached: true });
+    patchTrace({ cachedModel: cached.model, cached: true });
     recordJevUsage({
       endpoint: "model-router",
       caller: options.caller || "model-router",
@@ -284,6 +293,12 @@ export async function selectJevModel(body, availableModels, options = {}) {
       promptTokens: 0,
       completionTokens: 0,
       choice: cached.model,
+    });
+    // Decision-cache hit: the session reuses a routing decision, mark it cache-active.
+    touchSessionCache(sessKey, {
+      model: cached.model,
+      provider: options.providerFromModelId?.(cached.model),
+      cacheActive: true,
     });
     return cached.model;
   }
@@ -311,7 +326,10 @@ export async function selectJevModel(body, availableModels, options = {}) {
     // The "Modell-Klasse" slider already narrowed the candidate pool in the
     // handler; its hint tells Jev how to weigh the remaining options.
     const tierPreference = getTierPreference(options.tierPreference);
-    const instructions = [BASE_INSTRUCTIONS, tierPreference.hint].filter(Boolean).join(" ");
+    const bigContextHint = options.bigContext
+      ? "Big-context session (jev-1m): this is a long append-only conversation relying on provider KV-cache prefix matching. Strongly prefer the candidate with the largest usable context window; avoid models that would truncate or summarize history."
+      : "";
+    const instructions = [BASE_INSTRUCTIONS, tierPreference.hint, bigContextHint].filter(Boolean).join(" ");
     const payload = {
       state: buildJevState(body, session),
       model: JEV_MODEL,
@@ -332,7 +350,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       fullPayload: payload,
       enrichCriteria: !!options.enrichCriteria,
       tierPreference: tierPreference.id,
-    }, models.length);
+    }, models.length, { id: options.traceId ?? null });
 
     if (options.debug) {
       const sample = Object.entries(criteria).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" | ");
@@ -350,7 +368,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       signal: controller.signal,
     });
     if (!response.ok) {
-      updateLastJevRequest({ error: `HTTP ${response.status}` });
+      patchTrace({ error: `HTTP ${response.status}` });
       logUsage({ status: "error", httpStatus: response.status, promptTokens: estimateTextTokens(requestBody), fallbackReason: `HTTP ${response.status}` });
       return fail(`Jev API HTTP ${response.status}`);
     }
@@ -358,6 +376,10 @@ export async function selectJevModel(body, availableModels, options = {}) {
     // response.text() may be unavailable on lightweight test doubles that only
     // implement .json(); fall back to re-stringifying the parsed body for those.
     const rawText = typeof response.text === "function" ? await response.text() : JSON.stringify(await response.json());
+    patchTrace({
+      latencyMs: Date.now() - jevStarted,
+      jevResponse: { httpStatus: response.status, rawText: rawText.slice(0, RESPONSE_CAP_CHARS), bytes: rawText.length, truncated: rawText.length > RESPONSE_CAP_CHARS },
+    });
     const data = safeParseJson(rawText);
     const selected = pickAnswer(data, MODEL_QUESTION_ID);
     // Jev's SystemOne API never returns a usage field (extractJevTokens is a real-usage
@@ -372,19 +394,24 @@ export async function selectJevModel(body, availableModels, options = {}) {
       choice: typeof selected === "string" ? selected : undefined,
     });
     if (typeof selected !== "string" || !models.includes(selected)) {
-      updateLastJevRequest({ rawSelected: selected, invalid: true });
+      patchTrace({ rawSelected: selected, invalid: true });
       options.info?.(`Jev wählte ungültig '${selected}'`);
       return fail(`Ungültige Jev-Auswahl '${selected}'`);
     }
 
-    updateLastJevRequest({ selectedModel: selected });
+    patchTrace({ selectedModel: selected });
     setSessionModel(sessionKey(body), selected);
+    touchSessionCache(sessKey, {
+      model: selected,
+      provider: options.providerFromModelId?.(selected),
+      promptTokens: estimatedTokens,
+    });
     setCachedJevDecision(sessKey, estimatedTokens, selected, "", options.cacheJevTtlMs);
     options.info?.(`Jev wählte '${selected}'${session.previousModel === selected ? " (sticky)" : ""}`);
     return selected;
   } catch (error) {
     const reason = error?.name === "AbortError" ? "timeout" : `network: ${error?.message || error}`;
-    updateLastJevRequest({ error: reason });
+    patchTrace({ error: reason });
     logUsage({ status: "error", fallbackReason: reason });
     return fail(error?.name === "AbortError" ? "Jev API Timeout" : `Jev API Fehler: ${error?.message || error}`);
   } finally {

@@ -25,9 +25,18 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
-import { JEV_MODEL_ALIASES, selectJevModel } from "../services/jevRouter.js";
+import {
+  JEV_MODEL_ALIASES,
+  JEV1M_MODEL_ALIASES,
+  selectJevModel,
+} from "../services/jevRouter.js";
+import { startJevTrace, tapJevResponse } from "@/lib/jev/requestLog.js";
+import { sessionKey } from "@/lib/jev/sessionModels.js";
+import { touchSessionCache, getSessionCacheMeta, clearSessionCacheByModel } from "@/lib/jev/sessionCache.js";
 import { filterModelsByTierPreference } from "../services/modelTiers.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess, getModelHealth } from "@/lib/modelHealth.js";
+import { clearSessionModelByModel } from "@/lib/jev/sessionModels.js";
+import { clearCachedJevDecisionByModel } from "@/lib/jev/decisionCache.js";
 import { getPricingForModel } from "open-sse/providers/pricing.js";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { getUsageStats } from "@/lib/db/repos/usageRepo.js";
@@ -56,6 +65,7 @@ function providerFromModelId(modelId) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  let jevTraceId = null; // 4-stage trace for the Jev Inspector (set when Jev routing runs)
   let body;
   try {
     body = await request.json();
@@ -111,7 +121,8 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   let routedModel = modelStr;
-  if (JEV_MODEL_ALIASES.has(modelStr)) {
+  const isJev1m = JEV1M_MODEL_ALIASES.has(modelStr);
+  if (isJev1m || JEV_MODEL_ALIASES.has(modelStr)) {
     let availableModels = [];
     try {
       const unavailableModels = await getUnavailableModelIds();
@@ -157,6 +168,40 @@ export async function handleChat(request, clientRawRequest = null) {
       if (estimatedTokens > 0 && availableModels.length > 0) {
         log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${jevCombo ? " (Combo 'jev')" : ""}`);
       }
+      // jev-1m: Pool auf große Kontextfenster eingrenzen (KV-Cache-freundliche
+      // Append-Only-Sessions). Fallback: Top-3 nach Kontext statt leerer Pool.
+      if (isJev1m) {
+        const minContext = Number(settings.jev1mMinContext) || 200000;
+        const beforeBig = availableModels.length;
+        const bigFiltered = availableModels.filter((modelId) => {
+          const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
+          return (Number(caps?.contextWindow) || 0) >= minContext;
+        });
+        if (bigFiltered.length > 0) {
+          availableModels = bigFiltered;
+          log.info("JEV", `[9Router-Jev] jev-1m Big-Context-Filter (>= ${minContext}): ${availableModels.length}/${beforeBig} Modelle`);
+        } else {
+          availableModels = [...availableModels]
+            .map((modelId) => ({
+              modelId,
+              window: Number(getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1))?.contextWindow) || 0,
+            }))
+            .sort((a, b) => b.window - a.window)
+            .slice(0, 3)
+            .map((x) => x.modelId);
+          log.warn("JEV", `[9Router-Jev] jev-1m: kein Modell >= ${minContext} -> Top-3 nach Kontextfenster: ${availableModels.join(", ")}`);
+        }
+      }
+      // Requests mit Bildinhalt brauchen ein vision-fähiges Ziel — Jev darf
+      // nur Kandidaten sehen, die die Bilder auch verarbeiten können.
+      if (detectRequiredCapabilities(body).has("vision")) {
+        const beforeVision = availableModels.length;
+        availableModels = availableModels.filter((modelId) => {
+          if (modelId === "jev" || modelId === "nineRouter/jev") return true;
+          return getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1)).vision;
+        });
+        log.info("JEV", `[9Router-Jev] Vision-Filter: ${availableModels.length}/${beforeVision} Modelle können Bilder verarbeiten`);
+      }
       // "Modell-Klasse" slider (dashboard): restrict the pool to the tiers the
       // user allows (small only … frontier only). Applied after the context
       // filter and before Jev sees the candidates, so a cached decision for a
@@ -168,10 +213,35 @@ export async function handleChat(request, clientRawRequest = null) {
       } else if (tierFilter.preference.id !== "balanced" && availableModels.length > 0) {
         log.warn("JEV", `[9Router-Jev] [WARN] Modell-Klasse '${tierFilter.preference.id}' passt zu keinem verfügbaren Modell -> Filter ignoriert`);
       }
+
+      // "Lokale Modelle ausschließen" (settings.jevExcludeLocalModels !== false):
+      // Models configured in the 'local-first' combo are excluded from Jev's candidate pool.
+      if (settings.jevExcludeLocalModels !== false) {
+        const localComboModels = await getComboModels("local-first");
+        if (Array.isArray(localComboModels) && localComboModels.length > 0) {
+          const localSet = new Set(localComboModels.map((m) => m.toLowerCase()));
+          const beforeCount = availableModels.length;
+          const filtered = availableModels.filter((modelId) => {
+            const raw = modelId.toLowerCase();
+            const bare = raw.includes("/") ? raw.slice(raw.indexOf("/") + 1) : raw;
+            return !localSet.has(raw) && !localSet.has(bare);
+          });
+          if (filtered.length > 0) {
+            const dropped = beforeCount - filtered.length;
+            availableModels = filtered;
+            if (dropped > 0) {
+              log.info("JEV", `[9Router-Jev] Lokale Modelle ('local-first') ausgeschlossen: ${dropped} Modelle entfernt (${availableModels.length} verbleiben)`);
+            }
+          }
+        }
+      }
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
     }
+    jevTraceId = startJevTrace({ model: body?.model, body: clientRawRequest?.body ?? body, mode: isJev1m ? "jev-1m" : "jev" });
     routedModel = await selectJevModel(body, availableModels, {
+      traceId: jevTraceId,
+      bigContext: isJev1m,
       apiKey: settings.jevApiKey,
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
@@ -201,10 +271,26 @@ export async function handleChat(request, clientRawRequest = null) {
     if (clientRawRequest?.body) clientRawRequest.body.model = routedModel;
   }
 
+  // Session-cache observability: feed the registry and expose an opaque meta
+  // (SSE comment / response headers via tapJevResponse). The Jev path already
+  // touched the registry inside selectJevModel; non-Jev requests are recorded here.
+  const sessKey = sessionKey(body);
+  if (sessKey) {
+    if (!(isJev1m || JEV_MODEL_ALIASES.has(modelStr))) {
+      touchSessionCache(sessKey, {
+        model: routedModel,
+        provider: providerFromModelId(routedModel),
+        promptTokens: estimateQoderPromptTokens(body),
+      });
+    }
+  }
+  const cacheMeta = sessKey ? getSessionCacheMeta(sessKey) : null;
+  const tap = (response) => tapJevResponse(response, jevTraceId, cacheMeta);
+
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, routedModel, userAgent, !!settings.ccFilterNaming);
-  if (bypassResponse) return bypassResponse.response || bypassResponse;
+  if (bypassResponse) return tap(bypassResponse.response || bypassResponse);
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
@@ -221,7 +307,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${routedModel}" with ${peakModels.length} models (strategy: fusion)`);
-      return handleFusionChat({
+      return tap(handleFusionChat({
         body,
         models: peakModels,
         handleSingleModel: (b, m, isPanel) => {
@@ -236,12 +322,12 @@ export async function handleChat(request, clientRawRequest = null) {
         comboName: routedModel,
         judgeModel: comboStrategies[routedModel]?.judgeModel,
         tuning: comboStrategies[routedModel]?.fusionTuning,
-      });
+      }));
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("CHAT", `Combo "${routedModel}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
+    return tap(handleComboChat({
       body,
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
@@ -252,7 +338,7 @@ export async function handleChat(request, clientRawRequest = null) {
       comboName: routedModel,
       comboStrategy,
       comboStickyLimit
-    });
+    }));
   }
 
   // Single model request — may still switch to a capacity-adapter model if the
@@ -261,7 +347,7 @@ export async function handleChat(request, clientRawRequest = null) {
   if (soloAugmented.length > 1) {
     const adapterAdded = soloAugmented.filter((m) => m !== routedModel);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${routedModel}" → trying ${soloAugmented.join(", ")}`);
-    return handleComboChat({
+    return tap(handleComboChat({
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
@@ -271,7 +357,7 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
       comboName: routedModel,
       comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
-    });
+    }));
   }
 
   // Extract thinking level from Jev-picked model suffix (e.g. "model(high)" -> "high")
@@ -281,7 +367,7 @@ export async function handleChat(request, clientRawRequest = null) {
     body.thinking_level = thinkingSuffix;
   }
 
-  return handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey);
+  return tap(handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey));
 }
 
 /**
@@ -442,6 +528,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       status: result.status,
       message: result.error,
     });
+
+    // If request failed with 413 or context window overflow, clear Jev decision cache
+    // and session stickiness for this model so it is not picked again on next turn.
+    if (result.status === 413 || String(result.error).toLowerCase().includes("context window limit") || String(result.error).toLowerCase().includes("exceeded this model context")) {
+      clearSessionModelByModel(model);
+      clearSessionModelByModel(`${provider}/${model}`);
+      clearCachedJevDecisionByModel(model);
+      clearCachedJevDecisionByModel(`${provider}/${model}`);
+      clearSessionCacheByModel(model);
+      clearSessionCacheByModel(`${provider}/${model}`);
+    }
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;

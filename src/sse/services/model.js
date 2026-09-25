@@ -84,13 +84,10 @@ export async function getModelInfo(modelStr) {
  */
 
 
-// Hardcoded builtin combos (like jev)
 const BUILTIN_COMBOS = {
   "local-first": {
     models: [
-      // Add your local models here
-      "claude-opus-4.7",
-      "glm/glm-5.1"
+      "qwen/AtomicChat/Qwen3.8-Flash-Next-GGUF"
     ]
   }
 };
@@ -99,14 +96,15 @@ export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
-  // Check hardcoded builtin combos first (like jev — not deletable)
-  if (BUILTIN_COMBOS[modelStr]) {
-    return BUILTIN_COMBOS[modelStr].models;
-  }
-
+  // Check database first so user modifications take precedence
   const combo = await getComboByName(modelStr);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
+  }
+
+  // Check hardcoded builtin combos as fallback only
+  if (BUILTIN_COMBOS[modelStr]) {
+    return BUILTIN_COMBOS[modelStr].models;
   }
   return null;
 }

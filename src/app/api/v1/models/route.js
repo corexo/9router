@@ -544,6 +544,9 @@ export async function buildModelsList(kindFilter, options = {}) {
   if (kindFilter.includes(LLM_KIND)) {
     models.unshift({ id: "jev", object: "model", owned_by: "9router" });
     models.unshift({ id: "nineRouter/jev", object: "model", owned_by: "9router" });
+    // Virtual big-context Jev variant (pool restricted to large-context models).
+    models.unshift({ id: "jev-1m", object: "model", owned_by: "9router" });
+    models.unshift({ id: "nineRouter/jev-1m", object: "model", owned_by: "9router" });
   }
 
   // Hide models the health registry marked as permanently unusable (unsupported /

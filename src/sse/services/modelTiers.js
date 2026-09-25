@@ -59,6 +59,8 @@ const TIER_PREFIXES = [
   ["gpt-4o-mini", "fast"],
   ["llama-3.2-1b", "fast"],
   ["llama-3.2-3b", "fast"],
+  ["qwen3.8-flash", "fast"],
+  ["qwen3-flash", "fast"],
 ];
 
 /** Returns "frontier" | "strong" | "mid" | "fast" | null for a bare model name. */

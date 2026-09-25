@@ -80,7 +80,13 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
-  const [jevForm, setJevForm] = useState({ apiKey: "", defaultModel: "", timeoutMs: 1200, tierPreference: "balanced" });
+  const [jevForm, setJevForm] = useState({
+    apiKey: "",
+    defaultModel: "",
+    timeoutMs: 1200,
+    tierPreference: "balanced",
+    excludeLocalModels: true,
+  });
   const [jevStatus, setJevStatus] = useState({ type: "", message: "" });
   const [jevLoading, setJevLoading] = useState(false);
 
@@ -130,6 +136,7 @@ export default function ProfilePage() {
           defaultModel: data?.jevDefaultModel || "",
           timeoutMs: data?.jevTimeoutMs || 1200,
           tierPreference: data?.jevTierPreference || "balanced",
+          excludeLocalModels: data?.jevExcludeLocalModels !== false,
         });
         setLoading(false);
       })
@@ -249,6 +256,7 @@ export default function ProfilePage() {
           jevDefaultModel: jevForm.defaultModel.trim(),
           jevTimeoutMs: Math.max(1, Number(jevForm.timeoutMs) || 1200),
           jevTierPreference: jevForm.tierPreference,
+          jevExcludeLocalModels: jevForm.excludeLocalModels,
         }),
       });
       const data = await res.json();
@@ -1692,6 +1700,19 @@ export default function ProfilePage() {
               <p className="text-xs sm:text-sm text-text-muted">
                 Begrenzt, aus welchen Modell-Tiers Jev bei jeder Anfrage wählen darf. Gilt auch im Cockpit.
               </p>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-2/40 border border-border/60">
+              <div className="flex flex-col gap-0.5 pr-4">
+                <span className="font-medium text-sm text-text-main">Lokale Modelle ('local-first') ausschließen</span>
+                <span className="text-xs text-text-muted">
+                  Modelle aus der 'local-first'-Combo werden nicht von Jev gewählt und fließen nicht in die Modellauswahl ein.
+                </span>
+              </div>
+              <Toggle
+                checked={jevForm.excludeLocalModels}
+                onChange={(checked) => setJevForm((prev) => ({ ...prev, excludeLocalModels: checked }))}
+                disabled={loading || jevLoading}
+              />
             </div>
             <Button type="submit" variant="primary" loading={jevLoading} className="w-full sm:w-auto self-start">
               Save Jev settings

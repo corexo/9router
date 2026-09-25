@@ -18,13 +18,17 @@ import {
   WEB_COOKIE_PROVIDERS,
   OPENAI_COMPATIBLE_PREFIX,
   ANTHROPIC_COMPATIBLE_PREFIX,
+  getProviderAlias,
 } from "@/shared/constants/providers";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
+import ConfigureProvidersModal from "./components/ConfigureProvidersModal";
+import ProviderModelsFooter from "./components/ProviderModelsFooter";
 import { STATUS_FILTER_OPTIONS, matchesStatusFilter } from "./utils";
 
 function getStatusDisplay(connected, error, errorCode) {
@@ -107,7 +111,12 @@ export default function ProvidersPage() {
   const [testingMode, setTestingMode] = useState(null);
   const [testResults, setTestResults] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [allModels, setAllModels] = useState([]);
+  const [disabledMap, setDisabledMap] = useState({});
+  const [fetchingProvider, setFetchingProvider] = useState(null);
+  const [showConfigureModal, setShowConfigureModal] = useState(false);
   const notify = useNotificationStore();
+  const router = useRouter();
   const searchQuery = useHeaderSearchStore((s) => s.query);
   const registerSearch = useHeaderSearchStore((s) => s.register);
   const unregisterSearch = useHeaderSearchStore((s) => s.unregister);
@@ -152,15 +161,21 @@ export default function ProvidersPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
-          fetch("/api/providers"),
-          fetch("/api/provider-nodes"),
-        ]);
+        const [connectionsRes, nodesRes, modelsRes, disabledRes] =
+          await Promise.all([
+            fetch("/api/providers"),
+            fetch("/api/provider-nodes"),
+            fetch("/api/models"),
+            fetch("/api/models/disabled"),
+          ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
         if (connectionsRes.ok)
           setConnections(connectionsData.connections || []);
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        if (modelsRes.ok) setAllModels((await modelsRes.json()).models || []);
+        if (disabledRes.ok)
+          setDisabledMap((await disabledRes.json()).disabled || {});
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
@@ -238,6 +253,106 @@ export default function ProvidersPage() {
     );
   };
 
+  const aliasOf = (id) => getProviderAlias(id) || id;
+
+  // Enabled/disabled model lists for one provider card. Disabled model ids
+  // are keyed by provider alias in the disabledModels store.
+  const getModelLists = (providerId) => {
+    const alias = aliasOf(providerId);
+    const disabled = new Set(disabledMap[alias] || disabledMap[providerId] || []);
+    const owned = allModels.filter(
+      (m) => m.provider === providerId || aliasOf(m.provider) === alias,
+    );
+    const seen = new Set(owned.map((m) => m.model));
+    const extra = [...disabled]
+      .filter((id) => !seen.has(id))
+      .map((id) => ({ model: id, name: id }));
+    const all = [
+      ...owned.map((m) => ({ ...m, name: m.name || m.model })),
+      ...extra,
+    ];
+    return {
+      enabled: all.filter((m) => !disabled.has(m.model)),
+      disabled: all.filter((m) => disabled.has(m.model)),
+    };
+  };
+
+  const refetchModelData = async () => {
+    try {
+      const [modelsRes, disabledRes] = await Promise.all([
+        fetch("/api/models"),
+        fetch("/api/models/disabled"),
+      ]);
+      if (modelsRes.ok) setAllModels((await modelsRes.json()).models || []);
+      if (disabledRes.ok)
+        setDisabledMap((await disabledRes.json()).disabled || {});
+    } catch (error) {
+      console.log("Error refetching models:", error);
+    }
+  };
+
+  const handleFetchModels = async (providerId) => {
+    const alias = aliasOf(providerId);
+    const matchingConnections = connections.filter((connection) =>
+      connection.isActive && (connection.provider === providerId || aliasOf(connection.provider) === alias),
+    );
+    if (matchingConnections.length === 0) {
+      notify.error("Keine aktive Verbindung zum Abrufen vorhanden");
+      return;
+    }
+    setFetchingProvider(providerId);
+    try {
+      const responses = await Promise.all(matchingConnections.map(async (connection) => {
+        const response = await fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      }));
+      const discovered = responses.flatMap((response) => response.models || []).map((model) => ({
+        model: model.id || model.model || model.slug || model.name,
+        name: model.name || model.display_name || model.displayName || model.id || model.model,
+        provider: providerId,
+      })).filter((model) => model.model);
+      setAllModels((previous) => {
+        const retained = previous.filter((model) => aliasOf(model.provider) !== alias);
+        const merged = new Map();
+        [...retained, ...getModelLists(providerId).enabled, ...getModelLists(providerId).disabled, ...discovered]
+          .forEach((model) => merged.set(`${aliasOf(model.provider || providerId)}:${model.model}`, { ...model, provider: model.provider || providerId }));
+        return [...merged.values()];
+      });
+      notify.success(`${discovered.length} Modelle abgerufen`);
+    } catch (error) {
+      notify.error(`Modelle konnten nicht abgerufen werden: ${error.message}`);
+    } finally {
+      setFetchingProvider(null);
+    }
+  };
+
+  const handleToggleModel = async (providerId, modelId, disable) => {
+    const alias = aliasOf(providerId);
+    setDisabledMap((prev) => {
+      const cur = new Set(prev[alias] || prev[providerId] || []);
+      if (disable) cur.add(modelId);
+      else cur.delete(modelId);
+      return { ...prev, [alias]: [...cur] };
+    });
+    try {
+      const res = disable
+        ? await fetch("/api/models/disabled", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ providerAlias: alias, ids: [modelId] }),
+          })
+        : await fetch(
+            `/api/models/disabled?providerAlias=${encodeURIComponent(alias)}&id=${encodeURIComponent(modelId)}`,
+            { method: "DELETE" },
+          );
+      if (!res.ok) throw new Error("toggle failed");
+    } catch (error) {
+      notify.error("Konnte Modell nicht umschalten");
+      refetchModelData();
+    }
+  };
+
   const handleBatchTest = async (mode, providerId = null) => {
     if (testingMode) return;
     setTestingMode(mode === "provider" ? providerId : mode);
@@ -305,6 +420,32 @@ export default function ProvidersPage() {
     if (!modes.includes("apikey")) return "oauth";
     return ["oauth", "apikey", "api_key"];
   };
+
+  // Providers from the registry that have no connections yet — offered in the
+  // "Provider einrichten" modal instead of cluttering the grid.
+  const registryEntries = [
+    ...Object.entries(OAUTH_PROVIDERS),
+    ...Object.entries(FREE_PROVIDERS),
+    ...Object.entries(FREE_TIER_PROVIDERS).filter(
+      ([, info]) => (info.serviceKinds ?? ["llm"]).includes("llm"),
+    ),
+    ...Object.entries(APIKEY_PROVIDERS).filter(
+      ([, info]) => (info.serviceKinds ?? ["llm"]).includes("llm"),
+    ),
+  ];
+  const unconfiguredProviders = registryEntries
+    .filter(
+      ([key, info]) =>
+        !info.hidden &&
+        !info.noAuth &&
+        getProviderStats(key, dualAuthTypes(info, key)).total === 0,
+    )
+    .map(([key, info]) => ({
+      id: key,
+      name: info.name,
+      color: info.color,
+      textIcon: info.textIcon,
+    }));
 
   const oauthEntries = sortByPriority(
     Object.entries(OAUTH_PROVIDERS).filter(
@@ -386,7 +527,16 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {unconfiguredProviders.length > 0 && (
+          <Button
+            size="sm"
+            icon="add"
+            onClick={() => setShowConfigureModal(true)}
+          >
+            Provider einrichten ({unconfiguredProviders.length})
+          </Button>
+        )}
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -454,6 +604,10 @@ export default function ProvidersPage() {
                   provider={info}
                   stats={getProviderStats(info.id, "apikey")}
                   authType="compatible"
+                  models={getModelLists(info.id)}
+                  onToggleModel={handleToggleModel}
+                  onFetchModels={handleFetchModels}
+                  fetching={fetchingProvider === info.id}
                   onToggle={(active) =>
                     handleToggleProvider(info.id, "apikey", active)
                   }
@@ -503,6 +657,10 @@ export default function ProvidersPage() {
                 provider={info}
                 stats={getProviderStats(key, authTypes)}
                 authType="oauth"
+                models={getModelLists(key)}
+                onToggleModel={handleToggleModel}
+                onFetchModels={handleFetchModels}
+                fetching={fetchingProvider === key}
                 onToggle={(active) => handleToggleProvider(key, authTypes, active)}
               />
             );
@@ -549,6 +707,10 @@ export default function ProvidersPage() {
                 provider={info}
                 stats={getProviderStats(key, freeAuthTypes)}
                 authType="free"
+                models={getModelLists(key)}
+                onToggleModel={handleToggleModel}
+                onFetchModels={handleFetchModels}
+                fetching={fetchingProvider === key}
                 onToggle={(active) =>
                   handleToggleProvider(key, freeAuthTypes, active)
                 }
@@ -564,6 +726,10 @@ export default function ProvidersPage() {
                 provider={info}
                 stats={getProviderStats(key, freeAuthTypes)}
                 authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
+                models={getModelLists(key)}
+                onToggleModel={handleToggleModel}
+                onFetchModels={handleFetchModels}
+                fetching={fetchingProvider === key}
                 onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
               />
             );
@@ -606,6 +772,10 @@ export default function ProvidersPage() {
               provider={info}
               stats={getProviderStats(key, "apikey")}
               authType="apikey"
+              models={getModelLists(key)}
+              onToggleModel={handleToggleModel}
+              onFetchModels={handleFetchModels}
+              fetching={fetchingProvider === key}
               onToggle={(active) => handleToggleProvider(key, "apikey", active)}
             />
           ))}
@@ -642,6 +812,12 @@ export default function ProvidersPage() {
           ))}
         </div>
       </div> */}
+
+      <ConfigureProvidersModal
+        isOpen={showConfigureModal}
+        onClose={() => setShowConfigureModal(false)}
+        providers={unconfiguredProviders}
+      />
 
       <AddCompatibleModal
         variant="openai"
@@ -693,7 +869,17 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
+function ProviderCard({
+  providerId,
+  provider,
+  stats,
+  authType,
+  onToggle,
+  models,
+  onToggleModel,
+  onFetchModels,
+  fetching,
+}) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isNoAuth = !!provider.noAuth;
 
@@ -780,6 +966,17 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             )}
           </div>
         </div>
+        {models && onToggleModel && (
+          <ProviderModelsFooter
+            enabled={models.enabled}
+            disabled={models.disabled}
+            onToggleModel={(modelId, disable) =>
+              onToggleModel(providerId, modelId, disable)
+            }
+            onFetchModels={onFetchModels ? () => onFetchModels(providerId) : undefined}
+            fetching={fetching}
+          />
+        )}
       </Card>
     </Link>
   );
@@ -793,6 +990,13 @@ ProviderCard.propTypes = {
     color: PropTypes.string,
     textIcon: PropTypes.string,
   }).isRequired,
+  models: PropTypes.shape({
+    enabled: PropTypes.array,
+    disabled: PropTypes.array,
+  }),
+  onToggleModel: PropTypes.func,
+  onFetchModels: PropTypes.func,
+  fetching: PropTypes.bool,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,
@@ -809,6 +1013,10 @@ function ApiKeyProviderCard({
   stats,
   authType,
   onToggle,
+  models,
+  onToggleModel,
+  onFetchModels,
+  fetching,
 }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
@@ -918,12 +1126,28 @@ function ApiKeyProviderCard({
             )}
           </div>
         </div>
+        {models && onToggleModel && (
+          <ProviderModelsFooter
+            enabled={models.enabled}
+            disabled={models.disabled}
+            onToggleModel={(modelId, disable) =>
+              onToggleModel(providerId, modelId, disable)
+            }
+            onFetchModels={onFetchModels ? () => onFetchModels(providerId) : undefined}
+            fetching={fetching}
+          />
+        )}
       </Card>
     </Link>
   );
 }
 
 ApiKeyProviderCard.propTypes = {
+  models: PropTypes.shape({
+    enabled: PropTypes.array,
+    disabled: PropTypes.array,
+  }),
+  onToggleModel: PropTypes.func,
   providerId: PropTypes.string.isRequired,
   provider: PropTypes.shape({
     id: PropTypes.string.isRequired,

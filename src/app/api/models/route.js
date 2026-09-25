@@ -1,68 +1,42 @@
 import { NextResponse } from "next/server";
-import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
-import { getDisabledModels } from "@/lib/disabledModelsDb";
-import { AI_MODELS } from "@/shared/constants/config";
-import { getProviderAlias } from "@/shared/constants/providers";
+import { getModelAliases, setModelAlias } from "@/models";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
-// GET /api/models - Get models with aliases
+// LLM kind sentinel (matches /api/v1/models)
+const LLM_KIND = "llm";
+
+// GET /api/models - Live model list per provider (delegates to the same
+// builder as /api/v1/models: active connections, live provider resolvers,
+// catalog + custom models, disabled models already excluded).
 export async function GET() {
   try {
-    const modelAliases = await getModelAliases();
-    const disabled = await getDisabledModels();
+    const [list, modelAliases] = await Promise.all([
+      buildModelsList([LLM_KIND]),
+      getModelAliases(),
+    ]);
 
-    const models = AI_MODELS
-      .filter((m) => {
-        const alias = getProviderAlias(m.provider) || m.provider;
-        const list = disabled[alias] || disabled[m.provider] || [];
-        return !list.includes(m.model);
-      })
-      .map((m) => {
-        const fullModel = `${m.provider}/${m.model}`;
-        const providerAlias = getProviderAlias(m.provider) || m.provider;
-        const routedModel = `${providerAlias}/${m.model}`;
-        const c = getCapabilitiesForModel(m.provider, m.model);
-        return {
-          ...m,
-          fullModel,
-          routedModel,
-          alias: modelAliases[fullModel] || m.model,
-          caps: {
-            vision: c.vision,
-            search: c.search,
-            reasoning: c.reasoning,
-            contextWindow: c.contextWindow,
-            maxOutput: c.maxOutput,
-          },
-        };
-      });
-
-    // Custom models ride along; their stored caps override the name heuristic
-    const seenFull = new Set(models.map((m) => m.fullModel));
-    const customModels = (await getCustomModels()).filter((m) => {
-      if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
-      return !seenFull.has(`${m.providerAlias}/${m.id}`);
-    });
-    for (const m of customModels) {
-      const fullModel = `${m.providerAlias}/${m.id}`;
-      const c = getCapabilitiesForModel(m.providerAlias, m.id);
-      models.push({
-        provider: m.providerAlias,
-        model: m.id,
-        name: m.name || m.id,
-        fullModel,
-        routedModel: fullModel,
-        alias: modelAliases[fullModel] || m.id,
+    const models = list.map((m) => {
+      const idx = m.id.indexOf("/");
+      const providerAlias = idx > 0 ? m.id.slice(0, idx) : m.owned_by || m.id;
+      const modelId = idx > 0 ? m.id.slice(idx + 1) : m.id;
+      const c = getCapabilitiesForModel(providerAlias, modelId);
+      return {
+        provider: providerAlias,
+        model: modelId,
+        name: m.name || modelId,
+        fullModel: m.id,
+        routedModel: m.id,
+        alias: modelAliases[m.id] || modelId,
         caps: {
           vision: c.vision,
           search: c.search,
           reasoning: c.reasoning,
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
-          ...(m.caps || {}),
         },
-      });
-    }
+      };
+    });
 
     return NextResponse.json({ models });
   } catch (error) {

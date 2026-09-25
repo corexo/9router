@@ -19,8 +19,19 @@ const navSections = [
       { href: "/dashboard/usage2", label: "Usage & Analytics", icon: "monitoring" },
       { href: "/dashboard/usage", label: "Usage (Klassisch)", icon: "bar_chart" },
       { href: "/dashboard/cache", label: "Cache Effizienz", icon: "bolt" },
+      { href: "/dashboard/cache-sessions", label: "Cache Sessions", icon: "cached" },
       { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
       { href: "/dashboard/widgets", label: "Widgets", icon: "dashboard_customize" },
+    ],
+  },
+  {
+    title: "Jev Inspector",
+    items: [
+      { href: "/dashboard/jev-inspector", label: "Alle Stufen", icon: "manage_search" },
+      { href: "/dashboard/jev-inspector?stage=incoming", label: "\u2460 Pi-Request", icon: "login", stage: "incoming" },
+      { href: "/dashboard/jev-inspector?stage=fullPayload", label: "\u2461 Jev-Request", icon: "outbound", stage: "fullPayload" },
+      { href: "/dashboard/jev-inspector?stage=jevResponse", label: "\u2462 Jev-Antwort", icon: "reply", stage: "jevResponse" },
+      { href: "/dashboard/jev-inspector?stage=outgoing", label: "\u2463 Response an Pi", icon: "logout", stage: "outgoing" },
     ],
   },
   {
@@ -44,7 +55,7 @@ const navSections = [
   },
 ];
 
-export default function Sidebar({ onClose }) {
+export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
   const [enableTranslator, setEnableTranslator] = useState(false);
@@ -66,36 +77,57 @@ export default function Sidebar({ onClose }) {
   };
 
   return (
-    <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl transition-colors duration-300 min-h-full">
-      {/* Traffic lights */}
-      <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-        <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-        <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-        <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
+    <aside className={cn(
+      "flex flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl transition-all duration-300 min-h-full shrink-0 relative",
+      collapsed ? "w-16" : "w-72"
+    )}>
+      {/* Traffic lights & Collapse Toggle Button */}
+      <div className={cn("flex items-center pt-5 pb-2", collapsed ? "justify-center px-2" : "justify-between px-5")}>
+        {!collapsed && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
+            <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
+            <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
+          </div>
+        )}
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title={collapsed ? "Sidebar ausklappen" : "Sidebar einklappen"}
+            className="p-1 rounded-lg text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors"
+          >
+            <span className="material-symbols-outlined text-[18px]">
+              {collapsed ? "dock_to_right" : "dock_to_left"}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Logo & Brand Header */}
-      <div className="px-5 py-3 flex flex-col gap-2">
-        <Link href="/dashboard" className="flex items-center gap-3 group">
-          <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-md transition-transform group-hover:scale-105">
+      <div className={cn("py-3 flex flex-col gap-2", collapsed ? "px-2 items-center" : "px-5")}>
+        <Link href="/dashboard" className="flex items-center gap-3 group" title={collapsed ? (APP_CONFIG.name || "PiRouter") : undefined}>
+          <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-md transition-transform group-hover:scale-105 shrink-0">
             <span className="material-symbols-outlined text-white text-[20px]">router</span>
           </div>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <h1 className="text-lg font-bold tracking-tight text-text-main">
-                {APP_CONFIG.name || "PiRouter"}
-              </h1>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 font-mono font-semibold">
-                ROUTER
-              </span>
+          {!collapsed && (
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-lg font-bold tracking-tight text-text-main truncate">
+                  {APP_CONFIG.name || "PiRouter"}
+                </h1>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 font-mono font-semibold">
+                  ROUTER
+                </span>
+              </div>
+              <span className="text-[11px] text-text-muted font-mono">v{APP_CONFIG.version}</span>
             </div>
-            <span className="text-[11px] text-text-muted font-mono">v{APP_CONFIG.version}</span>
-          </div>
+          )}
         </Link>
       </div>
 
       {/* Navigation Sections */}
-      <nav className="flex-1 px-3 py-2 space-y-4 overflow-y-auto custom-scrollbar">
+      <nav className={cn("flex-1 py-2 space-y-4 overflow-y-auto custom-scrollbar", collapsed ? "px-1.5" : "px-3")}>
         {navSections.map((section, sIdx) => {
           // Filter items based on feature flags (e.g. translator)
           const visibleItems = section.items.filter(
@@ -104,19 +136,25 @@ export default function Sidebar({ onClose }) {
 
           return (
             <div key={section.title || sIdx} className="space-y-0.5">
-              <p className="px-3 text-[11px] font-semibold text-text-muted/60 uppercase tracking-wider mb-1.5">
-                {section.title}
-              </p>
+              {!collapsed ? (
+                <p className="px-3 text-[11px] font-semibold text-text-muted/60 uppercase tracking-wider mb-1.5">
+                  {section.title}
+                </p>
+              ) : (
+                <div className="h-px bg-border/40 mx-2 my-2" />
+              )}
 
               {visibleItems.map((item) => {
-                const active = isActive(item.href);
+                const active = item.stage ? false : isActive(item.href);
                 return (
                   <Link
-                    key={item.href}
+                    key={item.href + (item.stage || "")}
                     href={item.href}
                     onClick={onClose}
+                    title={collapsed ? item.label : undefined}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-1.5 rounded-lg transition-all group",
+                      "flex items-center rounded-lg transition-all group",
+                      collapsed ? "justify-center p-2" : "gap-3 px-3 py-1.5",
                       active
                         ? "bg-primary/10 text-primary font-medium shadow-xs"
                         : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -124,14 +162,14 @@ export default function Sidebar({ onClose }) {
                   >
                     <span
                       className={cn(
-                        "material-symbols-outlined text-[18px]",
+                        "material-symbols-outlined text-[18px] shrink-0",
                         active ? "fill-1 text-primary" : "group-hover:text-primary transition-colors"
                       )}
                     >
                       {item.icon}
                     </span>
-                    <span className="text-[13px] flex-1 truncate">{item.label}</span>
-                    {item.badge && (
+                    {!collapsed && <span className="text-[13px] flex-1 truncate">{item.label}</span>}
+                    {!collapsed && item.badge && (
                       <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                         {item.badge}
                       </span>
@@ -141,7 +179,7 @@ export default function Sidebar({ onClose }) {
               })}
 
               {/* Accordion for Media Providers in System section */}
-              {section.title === "System & Tools" && (
+              {section.title === "System & Tools" && !collapsed && (
                 <div className="pt-0.5">
                   <button
                     onClick={() => setMediaOpen((v) => !v)}
@@ -204,14 +242,20 @@ export default function Sidebar({ onClose }) {
       </nav>
 
       {/* Footer Status */}
-      <div className="p-3 border-t border-border-subtle/60 mt-auto bg-surface/30">
-        <div className="flex items-center justify-between px-2 py-1 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-mono text-[11px] text-text-main font-medium">PiRouter Active</span>
+      <div className={cn("border-t border-border-subtle/60 mt-auto bg-surface/30", collapsed ? "p-2 text-center" : "p-3")}>
+        {!collapsed ? (
+          <div className="flex items-center justify-between px-2 py-1 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-mono text-[11px] text-text-main font-medium">PiRouter Active</span>
+            </div>
+            <span className="font-mono text-[10px] text-text-muted">Port 9310</span>
           </div>
-          <span className="font-mono text-[10px] text-text-muted">Port 9310</span>
-        </div>
+        ) : (
+          <div className="flex justify-center py-1" title="PiRouter Active · Port 9310">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -219,4 +263,6 @@ export default function Sidebar({ onClose }) {
 
 Sidebar.propTypes = {
   onClose: PropTypes.func,
+  collapsed: PropTypes.bool,
+  onToggleCollapse: PropTypes.func,
 };

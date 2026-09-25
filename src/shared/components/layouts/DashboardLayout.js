@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
@@ -33,9 +33,30 @@ function getToastStyle(type) {
 
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
+
+  // Load collapsed preference from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("9router_sidebar_collapsed");
+      if (saved !== null) {
+        setIsCollapsed(saved === "true");
+      }
+    } catch {}
+  }, []);
+
+  const toggleCollapse = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("9router_sidebar_collapsed", String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">
@@ -78,7 +99,7 @@ export default function DashboardLayout({ children }) {
 
       {/* Sidebar - Desktop */}
       <div className="hidden lg:flex">
-        <Sidebar />
+        <Sidebar collapsed={isCollapsed} onToggleCollapse={toggleCollapse} />
       </div>
 
       {/* Sidebar - Mobile */}
@@ -94,9 +115,14 @@ export default function DashboardLayout({ children }) {
       <main className="flex flex-col flex-1 h-full min-w-0 relative transition-colors duration-300 isolate">
         {/* Faint grid background */}
         <div className="landing-grid absolute inset-0 pointer-events-none -z-10" aria-hidden="true" />
-        <Header key={pathname} onMenuClick={() => setSidebarOpen(true)} />
-        <div className={`flex-1 overflow-y-auto custom-scrollbar ${pathname === "/dashboard/basic-chat" ? "" : "p-6 lg:p-10"} ${pathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
-          <div className={`${pathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>{children}</div>
+        <Header
+          key={pathname}
+          onMenuClick={() => setSidebarOpen(true)}
+          onToggleSidebar={toggleCollapse}
+          isSidebarCollapsed={isCollapsed}
+        />
+        <div className={`flex-1 overflow-y-auto custom-scrollbar ${pathname === "/dashboard/basic-chat" ? "" : "p-4 sm:p-6 lg:p-8 xl:p-10"} ${pathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
+          <div className={`${pathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "w-full max-w-7xl mx-auto"}`}>{children}</div>
         </div>
       </main>
     </div>

@@ -55,3 +55,16 @@ export function setSessionModel(key, model) {
   // Map preserves insertion order, so the oldest entry is the first key.
   while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
 }
+
+export function clearSessionModel(key) {
+  if (!key) return;
+  store().delete(key);
+}
+
+export function clearSessionModelByModel(model) {
+  if (!model) return;
+  const sessions = store();
+  for (const [k, v] of sessions.entries()) {
+    if (v.model === model) sessions.delete(k);
+  }
+}

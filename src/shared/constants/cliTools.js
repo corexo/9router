@@ -158,7 +158,6 @@ export const CLI_TOOLS = {
     description: "Claude Desktop Cowork (third-party inference)",
     configType: "custom",
   },
-  },
   droid: {
     id: "droid",
     name: "Factory Droid",

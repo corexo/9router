@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Chart from "chart.js/auto";
 import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton, JevTierSlider } from "@/shared/components";
+import { getModelTier } from "@/sse/services/modelTiers.js";
 import CompactQuotaTracker from "./CompactQuotaTracker";
 
 const PERIODS = [
@@ -84,6 +85,13 @@ export default function CockpitClient() {
   // "Modell-Klasse" slider: which tiers Jev may route to (fast … max)
   const [jevTierPreference, setJevTierPreference] = useState("balanced");
   const [savingTier, setSavingTier] = useState(false);
+  // Lokale Modelle ('local-first') ausschließen
+  const [jevExcludeLocalModels, setJevExcludeLocalModels] = useState(true);
+  const [savingExcludeLocal, setSavingExcludeLocal] = useState(false);
+  // Jev candidates table state
+  const [jevModels, setJevModels] = useState([]);
+  const [jevModelsLoading, setJevModelsLoading] = useState(false);
+  const [jevViewMode, setJevViewMode] = useState("table"); // "table" | "bars"
 
   const loadSaverSettings = useCallback(async () => {
     try {
@@ -100,6 +108,7 @@ export default function CockpitClient() {
           headroomUrl: s.headroomUrl || "http://localhost:8787",
         });
         setJevTierPreference(s.jevTierPreference || "balanced");
+        setJevExcludeLocalModels(s.jevExcludeLocalModels !== false);
       }
     } catch (err) {
       console.error("[Cockpit] Error loading settings:", err);
@@ -156,6 +165,25 @@ export default function CockpitClient() {
       setJevTierPreference(previous);
     } finally {
       setSavingTier(false);
+    }
+  };
+
+  const handleUpdateExcludeLocalModels = async (exclude) => {
+    const previous = jevExcludeLocalModels;
+    setJevExcludeLocalModels(exclude);
+    setSavingExcludeLocal(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jevExcludeLocalModels: exclude }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error("[Cockpit] Error updating Jev exclude local models setting:", err);
+      setJevExcludeLocalModels(previous);
+    } finally {
+      setSavingExcludeLocal(false);
     }
   };
 
@@ -238,7 +266,11 @@ export default function CockpitClient() {
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
     try {
-      const res = await fetch(`/api/dashboard/cockpit?period=${period}`);
+      const [res, jevRes, combosRes] = await Promise.all([
+        fetch(`/api/dashboard/cockpit?period=${period}`),
+        fetch("/api/debug/jev").catch(() => null),
+        fetch("/api/combos").catch(() => null),
+      ]);
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -257,6 +289,26 @@ export default function CockpitClient() {
             setActiveAccountPings((prev) => ({ ...prev, ...newPings }));
           }
         }
+      }
+
+      // Collect candidate models from latest criteria or combo
+      let pool = [];
+      if (jevRes && jevRes.ok) {
+        const debugData = await jevRes.json();
+        const latest = debugData.log?.[0];
+        if (latest?.modelCriteria) {
+          pool = Object.keys(latest.modelCriteria);
+        }
+      }
+      if (pool.length === 0 && combosRes && combosRes.ok) {
+        const cJson = await combosRes.json();
+        const jevCombo = cJson.combos?.find((c) => c.name === "jev");
+        if (jevCombo?.models?.length > 0) {
+          pool = jevCombo.models;
+        }
+      }
+      if (pool.length > 0) {
+        setJevModels(pool);
       }
     } catch (err) {
       console.error("[Cockpit] Error loading cockpit data:", err);
@@ -1138,8 +1190,8 @@ export default function CockpitClient() {
         </div>
       </Card>
 
-      {/* Grid: Jev Intelligent Routing & Cache Performance */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Grid: Jev Intelligent Routing & Cache Performance - Umbruch bei geringer Breite */}
+      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
         {/* Left: Jev Router Details */}
         <Card padding="md" className="flex flex-col">
           <div className="flex items-center justify-between mb-3">
@@ -1176,40 +1228,208 @@ export default function CockpitClient() {
               />
             </div>
 
-            {/* Top Choices */}
-            <div>
-              <div className="text-xs font-semibold uppercase text-text-muted mb-2 tracking-wider">
-                Häufigste Modell-Auswahlen
+            {/* Lokale Modelle ('local-first') ausschließen */}
+            <div className="p-3 rounded-xl bg-surface-2/40 border border-border/60 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="material-symbols-outlined text-[18px] text-text-muted shrink-0">
+                  {jevExcludeLocalModels ? "cloud" : "devices"}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-text-main flex items-center gap-1.5">
+                    <span>Lokale Modelle ('local-first')</span>
+                    <Badge variant={jevExcludeLocalModels ? "outline" : "success"} size="sm" className="text-[10px] font-mono">
+                      {savingExcludeLocal ? "SPEICHERT…" : jevExcludeLocalModels ? "AUSGESCHLOSSEN" : "ERLAUBT"}
+                    </Badge>
+                  </div>
+                  <div className="text-[11px] text-text-muted truncate">
+                    {jevExcludeLocalModels ? "Nur Cloud-Modelle aktiv" : "Lokale Modelle fließen in Jev-Wahl ein"}
+                  </div>
+                </div>
               </div>
-              {jev.topChoices?.length > 0 ? (
-                <div className="space-y-2">
-                  {jev.topChoices.map((choice, i) => {
-                    const maxCount = jev.topChoices[0]?.count || 1;
-                    const pct = Math.round((choice.count / (jev.requests || 1)) * 100);
+              <Toggle
+                checked={jevExcludeLocalModels}
+                onChange={handleUpdateExcludeLocalModels}
+                disabled={savingExcludeLocal}
+              />
+            </div>
+
+            {/* Jev Pool & Modell-Entscheidungen (Tabelle & Balkenansicht) */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase text-text-muted tracking-wider">
+                    Jev Modell-Pool &amp; Anfragen
+                  </span>
+                  <Badge variant="outline" size="sm" className="text-[10px] font-mono">
+                    {(() => {
+                      const allSet = new Set([
+                        ...jevModels,
+                        ...Object.keys(jev.choices || {}),
+                        ...(jev.topChoices || []).map((c) => c.model),
+                      ]);
+                      return `${allSet.size} Modelle`;
+                    })()}
+                  </Badge>
+                </div>
+                <div className="inline-flex p-0.5 rounded-lg bg-surface-2 border border-border/50 text-[11px]">
+                  <button
+                    onClick={() => setJevViewMode("table")}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors flex items-center gap-1 ${
+                      jevViewMode === "table"
+                        ? "bg-surface text-text-main shadow-sm"
+                        : "text-text-muted hover:text-text-main"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">table_rows</span>
+                    Tabelle
+                  </button>
+                  <button
+                    onClick={() => setJevViewMode("bars")}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors flex items-center gap-1 ${
+                      jevViewMode === "bars"
+                        ? "bg-surface text-text-main shadow-sm"
+                        : "text-text-muted hover:text-text-main"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[13px]">bar_chart</span>
+                    Top 5
+                  </button>
+                </div>
+              </div>
+
+              {jevViewMode === "table" ? (
+                (() => {
+                  const choicesMap = jev.choices || {};
+                  for (const c of jev.topChoices || []) {
+                    if (choicesMap[c.model] == null) choicesMap[c.model] = c.count;
+                  }
+                  const allModelNames = Array.from(new Set([
+                    ...jevModels,
+                    ...Object.keys(choicesMap),
+                  ]));
+
+                  if (allModelNames.length === 0) {
                     return (
-                      <div key={i} className="p-2 rounded-lg bg-surface-2/60 border border-border/50">
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="font-mono font-medium text-text-main truncate max-w-[240px]">
-                            {choice.model}
-                          </span>
-                          <span className="text-text-muted font-mono">
-                            {choice.count.toLocaleString()} ({pct}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-surface rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className="bg-indigo-500 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${(choice.count / maxCount) * 100}%` }}
-                          />
-                        </div>
+                      <div className="text-center p-6 text-text-muted text-xs border border-border/50 rounded-xl bg-surface-2/30">
+                        Keine Modelle im Pool gefunden.
                       </div>
                     );
-                  })}
-                </div>
+                  }
+
+                  const rows = allModelNames.map((model) => {
+                    const count = choicesMap[model] || 0;
+                    const pct = jev.requests > 0 ? Math.round((count / jev.requests) * 100) : 0;
+                    const tier = getModelTier(model) || "unbekannt";
+                    return { model, count, pct, tier };
+                  }).sort((a, b) => {
+                    if (b.count !== a.count) return b.count - a.count;
+                    return a.model.localeCompare(b.model);
+                  });
+
+                  const tierBadges = {
+                    frontier: { bg: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30", label: "FRONTIER" },
+                    strong: { bg: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30", label: "STRONG" },
+                    mid: { bg: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30", label: "MID" },
+                    fast: { bg: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", label: "FAST" },
+                  };
+
+                  return (
+                    <div className="overflow-x-auto rounded-xl border border-border/60 bg-surface/60 max-h-[340px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur-sm border-b border-border text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                          <tr>
+                            <th className="p-2.5">Kandidaten-Modell</th>
+                            <th className="p-2.5 text-center">Tier</th>
+                            <th className="p-2.5 text-right">Anfragen (Decisions)</th>
+                            <th className="p-2.5 text-right">Anteil</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/50">
+                          {rows.map((row) => {
+                            const badge = tierBadges[row.tier] || {
+                              bg: "bg-surface-2 text-text-muted border-border/50",
+                              label: row.tier.toUpperCase(),
+                            };
+                            const isChosen = row.count > 0;
+                            return (
+                              <tr
+                                key={row.model}
+                                className={`transition-colors hover:bg-surface-2/40 ${
+                                  isChosen ? "bg-surface" : "opacity-60 bg-surface-2/10"
+                                }`}
+                              >
+                                <td className="p-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                        isChosen ? "bg-emerald-500" : "bg-slate-400"
+                                      }`}
+                                    />
+                                    <span className="font-mono font-medium text-text-main truncate max-w-[260px]" title={row.model}>
+                                      {row.model}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${badge.bg}`}>
+                                    {badge.label}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-semibold">
+                                  <span className={isChosen ? "text-indigo-600 dark:text-indigo-400" : "text-text-muted"}>
+                                    {row.count.toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="p-2.5 text-right font-mono text-text-muted">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <span>{row.pct}%</span>
+                                    <div className="w-10 bg-surface-2 rounded-full h-1 overflow-hidden shrink-0">
+                                      <div
+                                        className="bg-indigo-500 h-full rounded-full"
+                                        style={{ width: `${Math.min(100, row.pct)}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()
               ) : (
-                <div className="text-center p-6 text-text-muted text-xs">
-                  Keine Jev-Entscheidungen im Zeitraum verzeichnet.
-                </div>
+                jev.topChoices?.length > 0 ? (
+                  <div className="space-y-2">
+                    {jev.topChoices.map((choice, i) => {
+                      const maxCount = jev.topChoices[0]?.count || 1;
+                      const pct = Math.round((choice.count / (jev.requests || 1)) * 100);
+                      return (
+                        <div key={i} className="p-2 rounded-lg bg-surface-2/60 border border-border/50">
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="font-mono font-medium text-text-main truncate max-w-[240px]">
+                              {choice.model}
+                            </span>
+                            <span className="text-text-muted font-mono">
+                              {choice.count.toLocaleString()} ({pct}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-surface rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className="bg-indigo-500 h-full rounded-full transition-all duration-300"
+                              style={{ width: `${(choice.count / maxCount) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center p-6 text-text-muted text-xs">
+                    Keine Jev-Entscheidungen im Zeitraum verzeichnet.
+                  </div>
+                )
               )}
             </div>
 
