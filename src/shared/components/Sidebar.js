@@ -16,6 +16,7 @@ const navSections = [
     title: "Operations & Flow",
     items: [
       { href: "/dashboard/cockpit", label: "Cockpit", icon: "space_dashboard", badge: "LIVE" },
+      { href: "/dashboard/flow", label: "Request Flow", icon: "route" },
       { href: "/dashboard/usage2", label: "Usage & Analytics", icon: "monitoring" },
       { href: "/dashboard/usage", label: "Usage (Klassisch)", icon: "bar_chart" },
       { href: "/dashboard/cache", label: "Cache Effizienz", icon: "bolt" },
