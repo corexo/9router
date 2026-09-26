@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Button, Card } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 
 // The 4 stages of one request, in flow order.
 const STAGES = [
@@ -104,7 +105,7 @@ function timeOf(entry) {
 export default function JevInspectorClient() {
 	const [log, setLog] = useState([]);
 	const [manualExpandedId, setExpandedId] = useState(null); // null = auto (neuester Eintrag bei Stage-Filter)
-	const [auto, setAuto] = useState(true);
+	const [auto, setAuto] = usePersistentState("9router_jev_inspector_auto", true);
 	const searchParams = useSearchParams();
 	const stageFilter = STAGES.some((s) => s.id === searchParams.get("stage")) ? searchParams.get("stage") : null;
 	const visibleStages = stageFilter ? STAGES.filter((s) => s.id === stageFilter) : STAGES;

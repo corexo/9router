@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import ProviderLimits from "./components/ProviderLimits";
 import ActiveQuotas from "./components/ActiveQuotas";
@@ -32,7 +33,7 @@ function UsageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [period, setPeriod] = useState("today");
+  const [period, setPeriod] = usePersistentState("9router_period", "today");
   const [widgets, setWidgets] = useState({});
 
   // Widget visibility from settings.widgets (missing key = enabled)

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Chart from "chart.js/auto";
 import { Card, Button, Badge, SegmentedControl, CardSkeleton } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 
 const PERIODS = [
   { value: "today", label: "Heute" },
@@ -34,10 +35,10 @@ function timeAgo(dateString) {
 }
 
 export default function CacheDashboardClient() {
-  const [period, setPeriod] = useState("7d");
+  const [period, setPeriod] = usePersistentState("9router_period", "7d");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = usePersistentState("9router_cache_auto_refresh", true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const timelineCanvasRef = useRef(null);

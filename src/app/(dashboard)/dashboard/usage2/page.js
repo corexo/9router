@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CardSkeleton, SegmentedControl } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 import RequestDetailsTab from "../usage/components/RequestDetailsTab";
 import UsageOverview from "./components/UsageOverview";
 
@@ -26,7 +27,7 @@ function Usage2Content() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [period, setPeriod] = useState("today");
+  const [period, setPeriod] = usePersistentState("9router_period", "today");
 
   const tabFromUrl = searchParams.get("tab");
   const activeTab = tabFromUrl && ["overview", "details"].includes(tabFromUrl)

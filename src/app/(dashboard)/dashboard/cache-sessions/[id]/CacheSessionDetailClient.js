@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, CardSkeleton } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 
 function fmtTokens(n) {
   if (n == null || isNaN(n)) return "0";
@@ -35,7 +36,7 @@ export default function CacheSessionDetailClient({ id }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(5); // seconds, 0 = off
+  const [autoRefresh, setAutoRefresh] = usePersistentState("9router_cache_sessions_refresh_interval", 5); // seconds, 0 = off
 
   const fetchDetail = useCallback(
     async (silent = false) => {

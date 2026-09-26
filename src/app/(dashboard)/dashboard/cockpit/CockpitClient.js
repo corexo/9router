@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Chart from "chart.js/auto";
 import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton, JevTierSlider } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 import { getModelTier } from "@/sse/services/modelTiers.js";
 import CompactQuotaTracker from "./CompactQuotaTracker";
 
@@ -58,10 +59,10 @@ const PROVIDER_COLORS = {
 };
 
 export default function CockpitClient() {
-  const [period, setPeriod] = useState("7d");
+  const [period, setPeriod] = usePersistentState("9router_period", "7d");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = usePersistentState("9router_cockpit_auto_refresh", true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [accountFilter, setAccountFilter] = useState("all");
   const [togglingId, setTogglingId] = useState(null);
@@ -216,7 +217,7 @@ export default function CockpitClient() {
   const prevRequestsRef = useRef(new Set());
 
   // Token flow time-range state ("live" | "1h" | "3h" | "6h" | "12h" | "24h" | "3d")
-  const [flowRange, setFlowRange] = useState("live");
+  const [flowRange, setFlowRange] = usePersistentState("9router_cockpit_flow_range", "live");
   const flowRangeRef = useRef("live");
   const [historicalFlowData, setHistoricalFlowData] = useState(null);
   const [flowLoading, setFlowLoading] = useState(false);
