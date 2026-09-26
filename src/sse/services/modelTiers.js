@@ -26,6 +26,8 @@ const TIER_PREFIXES = [
   // trivial follow-ups ("ja", "weiter"); it is strong, not opus-grade.
   ["claude-fable-5", "strong"],
   ["gpt-6-astra", "frontier"],
+  ["gpt-6-sol", "strong"],
+  ["gpt-6-luna", "fast"],
   ["gpt-6", "frontier"],
   ["glm-5.3", "frontier"],
   ["gemini-3.1-pro", "frontier"],
