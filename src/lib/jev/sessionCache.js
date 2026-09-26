@@ -23,15 +23,22 @@ const TTL_MS = 2 * 60 * 60 * 1000;
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 
 // Provider families with prompt-cache support (ChatGPT/Codex via prompt_cache_key,
-// GLM via prefix cache, Claude via cache_control anchoring).
+// GLM via prefix cache, Claude via cache_control anchoring, Gemini via context cache).
 const PROMPT_CACHE_PROVIDERS = new Set([
-  "codex", "chatgpt",
+  "codex", "chatgpt", "openai",
   "glm", "glm-cn", "zai",
   "anthropic", "claude",
+  "gemini", "deepseek", "qwen",
+  "cloudflare-ai",
 ]);
 
 export function supportsPromptCache(provider) {
-  return PROMPT_CACHE_PROVIDERS.has(provider);
+  if (!provider) return false;
+  const p = String(provider).toLowerCase();
+  for (const known of PROMPT_CACHE_PROVIDERS) {
+    if (p.includes(known)) return true;
+  }
+  return false;
 }
 
 function store() {
@@ -106,6 +113,71 @@ export function touchSessionCache(sessionKey, { model, provider, cachedTokens, p
   return entry.id;
 }
 
+/**
+ * Update the session cache with authoritative upstream token usage upon response completion.
+ * Does NOT increment request count; updates existing turn or records cached/prompt tokens.
+ */
+export function updateSessionCacheUsage(sessionKey, { model, provider, cachedTokens, promptTokens } = {}) {
+  if (!sessionKey) return null;
+  const sessions = store();
+  let entry = sessions.get(sessionKey);
+  if (!entry || isExpired(entry)) {
+    sessions.delete(sessionKey);
+    entry = createEntry();
+    entry.requests = 1;
+    sessions.set(sessionKey, entry);
+    while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
+  }
+
+  entry.lastActive = Date.now();
+  if (typeof model === "string" && model && !entry.models.includes(model)) entry.models.push(model);
+  if (typeof provider === "string" && provider) {
+    if (!entry.providers.includes(provider)) entry.providers.push(provider);
+    if (supportsPromptCache(provider)) entry.cacheCapableSeen = true;
+  }
+
+  const cachedNum = Number(cachedTokens) || 0;
+  const promptNum = Number(promptTokens) || 0;
+
+  if (cachedNum > 0) {
+    entry.cachedTokens += cachedNum;
+    entry.cacheFlagged = true;
+    entry.cacheCapableSeen = true;
+  }
+
+  if (!entry.turns) entry.turns = [];
+  if (entry.turns.length > 0) {
+    const latestTurn = entry.turns[0];
+    if (cachedNum > 0) {
+      latestTurn.cachedTokens = cachedNum;
+      latestTurn.cacheActive = true;
+    }
+    if (promptNum > 0) {
+      const prevEst = latestTurn.promptTokens || 0;
+      if (prevEst > 0 && entry.promptTokens >= prevEst) {
+        entry.promptTokens = entry.promptTokens - prevEst + promptNum;
+      } else if (entry.promptTokens === 0) {
+        entry.promptTokens += promptNum;
+      }
+      latestTurn.promptTokens = promptNum;
+    }
+    if (model) latestTurn.model = model;
+    if (provider) latestTurn.provider = provider;
+  } else {
+    if (promptNum > 0) entry.promptTokens += promptNum;
+    entry.turns.unshift({
+      timestamp: new Date().toISOString(),
+      model: model || null,
+      provider: provider || null,
+      promptTokens: promptNum,
+      cachedTokens: cachedNum,
+      cacheActive: cachedNum > 0,
+    });
+  }
+
+  return entry.id;
+}
+
 function toPublicEntry(entry) {
   return {
     cacheId: entry.id,
@@ -115,7 +187,7 @@ function toPublicEntry(entry) {
     cachedTokens: entry.cachedTokens,
     promptTokens: entry.promptTokens,
     requests: entry.requests,
-    cacheActive: entry.cacheFlagged || (entry.cachedTokens > 0 && entry.cacheCapableSeen),
+    cacheActive: entry.cacheFlagged || entry.cachedTokens > 0 || (entry.cachedTokens > 0 && entry.cacheCapableSeen),
     lastActive: new Date(entry.lastActive).toISOString(),
     createdAt: new Date(entry.createdAt).toISOString(),
   };

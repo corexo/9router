@@ -1,6 +1,8 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage } from "../../utils/usageTracking.js";
+import { sessionKey as computeSessionKey } from "@/lib/jev/sessionModels.js";
+import { updateSessionCacheUsage } from "@/lib/jev/sessionCache.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -100,7 +102,18 @@ export function formatDoneLine({ usage, latency }) {
   return `DONE ${latency?.total ?? 0}ms${ttftStr} · ${inStr} · OUT ${outTok}`;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE", silent = false }) {
+export function saveUsageStats({
+  provider,
+  model,
+  tokens,
+  connectionId,
+  apiKey,
+  endpoint,
+  body,
+  sessionKey,
+  label = "USAGE",
+  silent = false,
+}) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
@@ -120,6 +133,23 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     prompt_tokens: tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
+
+  // Sync actual upstream cached tokens into in-memory sessionCache registry
+  try {
+    const sKey = sessionKey || (body ? computeSessionKey(body) : null);
+    if (sKey) {
+      const cached = normalized.cached_tokens || normalized.cache_read_input_tokens || 0;
+      const prompt = normalized.prompt_tokens || normalized.input_tokens || inTokens;
+      updateSessionCacheUsage(sKey, {
+        model,
+        provider,
+        cachedTokens: cached,
+        promptTokens: prompt,
+      });
+    }
+  } catch (err) {
+    console.error("[SessionCache] Failed to sync usage tokens:", err?.message || err);
+  }
 
   saveRequestUsage({
     provider: provider || "unknown",
