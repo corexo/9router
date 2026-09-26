@@ -18,8 +18,7 @@ const navSections = [
     items: [
       { href: "/dashboard/cockpit", label: "Cockpit", icon: "space_dashboard", badge: "LIVE" },
       { href: "/dashboard/flow", label: "Request Flow", icon: "route" },
-      { href: "/dashboard/usage2", label: "Usage & Analytics", icon: "monitoring" },
-      { href: "/dashboard/usage", label: "Usage (Klassisch)", icon: "bar_chart" },
+      { href: "/dashboard/usage", label: "Usage & Analytics", icon: "monitoring" },
       { href: "/dashboard/cache", label: "Cache Effizienz", icon: "bolt" },
       { href: "/dashboard/cache-sessions", label: "Cache Sessions", icon: "cached" },
       { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },

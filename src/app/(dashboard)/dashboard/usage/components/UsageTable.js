@@ -107,6 +107,7 @@ export default function UsageTable({
   emptyMessage,
 }) {
   const [expanded, setExpanded] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Load expanded state from localStorage
   useEffect(() => {
@@ -135,6 +136,29 @@ export default function UsageTable({
     });
   }, []);
 
+  const expandAll = useCallback(() => {
+    setExpanded(new Set(groupedData.map((g) => g.groupKey)));
+  }, [groupedData]);
+
+  const collapseAll = useCallback(() => {
+    setExpanded(new Set());
+  }, []);
+
+  const filteredGroups = useMemo(() => {
+    if (!searchQuery.trim()) return groupedData;
+    const q = searchQuery.toLowerCase().trim();
+    return groupedData.filter((group) => {
+      if (group.groupKey?.toLowerCase().includes(q)) return true;
+      return group.items?.some((item) =>
+        item.rawModel?.toLowerCase().includes(q) ||
+        item.provider?.toLowerCase().includes(q) ||
+        item.accountName?.toLowerCase().includes(q) ||
+        item.keyName?.toLowerCase().includes(q) ||
+        item.endpoint?.toLowerCase().includes(q)
+      );
+    });
+  }, [groupedData, searchQuery]);
+
   const valueColumns = useMemo(() => {
     if (viewMode === "tokens") {
       return [
@@ -155,18 +179,70 @@ export default function UsageTable({
   const totalColSpan = columns.length + valueColumns.length;
 
   return (
-    <Card className="overflow-hidden">
-      <div className="p-4 border-b border-border bg-bg-subtle/50">
-        <h3 className="font-semibold">{title}</h3>
+    <Card className="overflow-hidden" padding="none">
+      <div className="flex flex-col gap-2 border-b border-border bg-surface-2/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          {title ? (
+            <h3 className="text-sm font-semibold text-text-main">{title}</h3>
+          ) : (
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+              Aufschlüsselung
+            </span>
+          )}
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-text-muted">
+            {filteredGroups.length} {filteredGroups.length === 1 ? "Eintrag" : "Einträge"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 sm:w-64">
+            <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-text-muted">
+              search
+            </span>
+            <input
+              type="text"
+              placeholder="In Tabelle suchen..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface pl-8 pr-7 py-1 text-xs text-text-main placeholder-text-muted/60 focus:border-primary focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 border-l border-border pl-2">
+            <button
+              onClick={expandAll}
+              title="Alle aufklappen"
+              className="p-1 rounded text-text-muted hover:text-text-main hover:bg-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">unfold_more</span>
+            </button>
+            <button
+              onClick={collapseAll}
+              title="Alle einklappen"
+              className="p-1 rounded text-text-muted hover:text-text-main hover:bg-surface transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">unfold_less</span>
+            </button>
+          </div>
+        </div>
       </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
-          <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
+          <thead className="bg-surface-2/60 text-text-muted uppercase text-xs">
             <tr>
               {columns.map((col) => (
                 <th
                   key={col.field}
-                  className={`px-6 py-3 cursor-pointer hover:bg-bg-subtle/50 ${col.align === "right" ? "text-right" : ""}`}
+                  className={`px-6 py-3 cursor-pointer hover:bg-surface-2 ${col.align === "right" ? "text-right" : ""}`}
                   onClick={() => onToggleSort(tableType, col.field)}
                 >
                   {col.label}{" "}
@@ -176,7 +252,7 @@ export default function UsageTable({
               {valueColumns.map((col) => (
                 <th
                   key={col.field}
-                  className="px-6 py-3 text-right cursor-pointer hover:bg-bg-subtle/50"
+                  className="px-6 py-3 text-right cursor-pointer hover:bg-surface-2"
                   onClick={() => onToggleSort(tableType, col.field)}
                 >
                   {col.label}{" "}
@@ -186,11 +262,11 @@ export default function UsageTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {groupedData.map((group) => (
+            {filteredGroups.map((group) => (
               <Fragment key={group.groupKey}>
                 {/* Group summary row */}
                 <tr
-                  className="group-summary cursor-pointer hover:bg-bg-subtle/50 transition-colors"
+                  className="group-summary cursor-pointer hover:bg-surface-2/50 transition-colors"
                   onClick={() => toggleGroup(group.groupKey)}
                 >
                   <td className="px-6 py-3">
@@ -210,7 +286,7 @@ export default function UsageTable({
                 {expanded.has(group.groupKey) && group.items.map((item) => (
                   <tr
                     key={`detail-${item.key}`}
-                    className="group-detail hover:bg-bg-subtle/20 transition-colors"
+                    className="group-detail hover:bg-surface-2/20 transition-colors"
                   >
                     {renderDetailCells(item)}
                     <ValueCells item={item} viewMode={viewMode} />
@@ -218,10 +294,10 @@ export default function UsageTable({
                 ))}
               </Fragment>
             ))}
-            {groupedData.length === 0 && (
+            {filteredGroups.length === 0 && (
               <tr>
                 <td colSpan={totalColSpan} className="px-6 py-8 text-center text-text-muted">
-                  {emptyMessage}
+                  {searchQuery ? `Keine Ergebnisse für "${searchQuery}"` : emptyMessage}
                 </td>
               </tr>
             )}
