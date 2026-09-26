@@ -33,17 +33,20 @@ function getToastStyle(type) {
 
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
 
-  // Load collapsed preference from localStorage
+  // Load collapsed preference from localStorage (default to true for modern compact rail)
   useEffect(() => {
     try {
       const saved = localStorage.getItem("9router_sidebar_collapsed");
       if (saved !== null) {
         setIsCollapsed(saved === "true");
+      } else {
+        setIsCollapsed(true);
+        localStorage.setItem("9router_sidebar_collapsed", "true");
       }
     } catch {}
   }, []);
