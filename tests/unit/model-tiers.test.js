@@ -22,6 +22,9 @@ describe("model tier preference", () => {
     expect(getModelTier("claude-opus-5")).toBe("frontier");
     expect(getModelTier("claude-fable-5-1")).toBe("strong");
     expect(getModelTier("glm-4.7-flash")).toBe("fast");
+    expect(getModelTier("gpt-6-astra")).toBe("frontier");
+    expect(getModelTier("gpt-6-sol")).toBe("strong");
+    expect(getModelTier("gpt-6-luna")).toBe("fast");
     expect(getModelTier("unknown-model")).toBeNull();
   });
 

@@ -227,6 +227,8 @@ export const PROVIDER_PRICING = {
     "openai/gpt-5.6-luna": { input: 0.2, output: 1.2, cached: 0.02, cache_creation: 0.25, reasoning: 1.2 },
     "openai/gpt-5.6-sol": { input: 5.0, output: 30.0, cached: 0.5, cache_creation: 6.25, reasoning: 30.0 },
     "openai/gpt-5.6-terra": { input: 2, output: 12, cached: 0.2, cache_creation: 2.5, reasoning: 12 },
+    "openai/gpt-6-luna": { input: 0.1, output: 0.5, cached: 0.01, cache_creation: 0.1, reasoning: 0.5 },
+    "openai/gpt-6-sol": { input: 2.0, output: 10.0, cached: 0.2, cache_creation: 2.0, reasoning: 10.0 },
     "openai/gpt-audio": { input: 2.5, output: 10.0, reasoning: 10.0 },
     "openai/gpt-audio-mini": { input: 0.6, output: 2.4, reasoning: 2.4 },
     "openai/gpt-oss-120b": { input: 0.039, output: 0.18, reasoning: 0.18 },

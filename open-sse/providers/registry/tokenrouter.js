@@ -36,6 +36,8 @@ export default {
     { id: "openai/gpt-5.4-pro", name: "Gpt 5.4 Pro" },
     { id: "openai/gpt-5.5", name: "Gpt 5.5" },
     { id: "openai/gpt-5.6-sol", name: "Gpt 5.6 Sol" },
+    { id: "openai/gpt-6-sol", name: "GPT 6 Sol" },
+    { id: "openai/gpt-6-luna", name: "GPT 6 Luna" },
     { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     { id: "google/gemini-3.6-flash", name: "Gemini 3.6 Flash" },
     { id: "deepseek/deepseek-v4-flash", name: "Deepseek V4 Flash" },

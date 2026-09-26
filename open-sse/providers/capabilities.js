@@ -184,6 +184,8 @@ export const PROVIDER_CAPABILITIES = {
     "gpt-5.6-luna-review":       CODEX_GPT_56_DEFAULT_CAPS,
   },
   "kiro": {
+    "gpt-6-sol":                  { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 },
+    "gpt-6-luna":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
     "gpt-5.6-sol": KIRO_GPT_5_6_CAPABILITIES,
     "gpt-5.6-terra": KIRO_GPT_5_6_CAPABILITIES,
     "gpt-5.6-luna": KIRO_GPT_5_6_CAPABILITIES,
@@ -196,6 +198,11 @@ export const PROVIDER_CAPABILITIES = {
     "gpt-5.6-sol-thinking-agentic": KIRO_GPT_5_6_CAPABILITIES,
     "gpt-5.6-terra-thinking-agentic": KIRO_GPT_5_6_CAPABILITIES,
     "gpt-5.6-luna-thinking-agentic": KIRO_GPT_5_6_CAPABILITIES,
+  },
+  "openai": {
+    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 },
+    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
   },
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
   // config (contextWindow=maxInputTokens, maxOutput=maxOutputTokens, vision=
@@ -331,6 +338,8 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*nanobanana*",    caps: { vision: true, imageOutput: true } },
 
   // ── OpenAI GPT-6.x (vision + thinking + web search) ──────────────
+  { pattern: "*gpt-6-sol*",     caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 } },
+  { pattern: "*gpt-6-luna*",    caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 } },
   { pattern: "*gpt-6*",         caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 } },
 
   // ── OpenAI GPT-5.x (vision + thinking + web search) ──────────────
