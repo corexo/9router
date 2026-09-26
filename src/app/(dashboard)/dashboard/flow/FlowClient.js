@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Card } from "@/shared/components";
+import { usePersistentState } from "@/shared/hooks";
 import { buildPath, pathColor } from "./path.js";
 
 // --- Node definitions with iconography and streamlined descriptions ---
@@ -100,18 +101,18 @@ export default function FlowClient() {
   const [reqs, setReqs] = useState([]);
   const [selIdx, setSelIdx] = useState(0);
   const [card, setCard] = useState(null);
-  const [filter, setFilter] = useState("all"); // "all" | "cache" | "stream" | "error"
-  const [isLiveLoop, setIsLiveLoop] = useState(false);
+  const [filter, setFilter] = usePersistentState("9router_flow_filter", "all"); // "all" | "cache" | "stream" | "error"
+  const [layoutMode, setLayoutMode] = usePersistentState("9router_flow_layout_mode", "split"); // "split" | "stacked"
+  const [isLiveLoop, setIsLiveLoop] = usePersistentState("9router_flow_live_loop", false);
   const [hoveredEdge, setHoveredEdge] = useState(null);
   const [hoveredNode, setHoveredNode] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const carouselRef = useRef(null);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch("/api/usage/request-details?pageSize=40");
+      const res = await fetch("/api/usage/request-details?pageSize=50");
       const json = await res.json();
       const list = (json.details || []).map((d, i) => ({
         i,
@@ -189,6 +190,140 @@ export default function FlowClient() {
   const nodeInputs = activeNode ? E.filter((e) => e.to === activeNode.id) : [];
   const nodeOutputs = activeNode ? E.filter((e) => e.from === activeNode.id) : [];
 
+  // Request list component (10 items visible, scroll container beyond)
+  const RequestListComponent = (
+    <Card padding="none" className="flex flex-col bg-surface-1 dark:bg-slate-950/80 border-border overflow-hidden">
+      {/* Header of Request List */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border bg-surface-2/60 dark:bg-slate-900/60">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-[17px] text-primary">receipt_long</span>
+          <span className="text-xs font-bold uppercase tracking-wider text-text-main font-mono">
+            Requests
+          </span>
+          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-surface-3 text-text-muted">
+            {filteredReqs.length}
+          </span>
+        </div>
+
+        {/* Filter Pills inside List Header */}
+        <div className="flex items-center gap-1">
+          {[
+            { id: "all", label: "Alle" },
+            { id: "cache", label: "Cache" },
+            { id: "stream", label: "Stream" },
+            { id: "error", label: "Fehler" },
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => {
+                setFilter(f.id);
+                setSelIdx(0);
+              }}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                filter === f.id
+                  ? "bg-primary text-white shadow-xs"
+                  : "text-text-muted hover:text-text-main hover:bg-surface-2"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Scrollable Container: Displays 10 items visible (~440px), then scroll */}
+      <div className="max-h-[440px] overflow-y-auto custom-scrollbar p-1.5 space-y-1">
+        {filteredReqs.length === 0 ? (
+          <div className="p-6 text-center text-xs text-text-muted italic">
+            Keine Requests für Filter &quot;{filter}&quot; gefunden.
+          </div>
+        ) : (
+          filteredReqs.map((r, idx) => {
+            const isSelected = sel?.i === r.i;
+            const isErr = r.status === "error" || (r.code && r.code >= 400);
+
+            return (
+              <div
+                key={r.i}
+                onClick={() => setSelIdx(idx)}
+                className={`relative flex items-center justify-between gap-2.5 px-3 py-2 rounded-xl text-xs cursor-pointer select-none transition-all duration-150 border ${
+                  isSelected
+                    ? "bg-slate-900 text-white border-cyan-400 ring-1 ring-cyan-400/30 shadow-md shadow-cyan-500/20"
+                    : "bg-surface-2/60 hover:bg-surface-3 text-text-main border-border/60 hover:border-text-muted/30"
+                }`}
+              >
+                {/* Left accent bar for active item */}
+                {isSelected && (
+                  <span className="absolute -left-1 top-2 bottom-2 w-1 rounded-r-full bg-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.8)]" />
+                )}
+
+                {/* Left details: Model + Provider + Time */}
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={`size-2 rounded-full shrink-0 ${
+                      isErr
+                        ? "bg-rose-500 animate-pulse"
+                        : r.cached
+                        ? "bg-emerald-400"
+                        : "bg-cyan-400"
+                    }`}
+                  />
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold truncate max-w-[130px] sm:max-w-[170px]">
+                        {r.model.split("/").pop()}
+                      </span>
+                      <span className="text-[10px] text-text-muted dark:text-slate-400 font-sans">
+                        {r.provider}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-text-muted font-mono leading-none">
+                      {r.time}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Right details: Latency + Badges */}
+                <div className="flex items-center gap-1.5 shrink-0 font-mono">
+                  <span className="text-[11px] font-bold text-cyan-500">
+                    {r.total}ms
+                  </span>
+
+                  {r.cached && (
+                    <span
+                      className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold"
+                      title="Cache HIT"
+                    >
+                      HIT
+                    </span>
+                  )}
+
+                  {r.stream && (
+                    <span
+                      className="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold"
+                      title="SSE Stream"
+                    >
+                      SSE
+                    </span>
+                  )}
+
+                  {isErr && (
+                    <span
+                      className="px-1.5 py-0.2 rounded text-[9px] bg-rose-500/15 text-rose-400 border border-rose-500/30 font-bold"
+                      title="Fehler"
+                    >
+                      {r.code || "ERR"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Card>
+  );
+
   return (
     <div className="flex min-w-0 flex-col gap-4 select-none">
       {/* Laser Keyframe animation style */}
@@ -215,30 +350,20 @@ export default function FlowClient() {
 
         {/* Live Controls & Mode Toggles */}
         <div className="flex items-center gap-2">
-          {/* Filter Pills */}
-          <div className="flex items-center bg-surface-2 rounded-lg p-0.5 border border-border text-xs">
-            {[
-              { id: "all", label: "Alle" },
-              { id: "cache", label: "Cache HIT" },
-              { id: "stream", label: "Stream" },
-              { id: "error", label: "Errors" },
-            ].map((f) => (
-              <button
-                key={f.id}
-                onClick={() => {
-                  setFilter(f.id);
-                  setSelIdx(0);
-                }}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                  filter === f.id
-                    ? "bg-primary text-white shadow-xs"
-                    : "text-text-muted hover:text-text-main"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+          {/* Layout Mode Toggle: Split vs Stacked */}
+          <button
+            type="button"
+            onClick={() => setLayoutMode(layoutMode === "split" ? "stacked" : "split")}
+            title={layoutMode === "split" ? "Auf Untereinander umschalten" : "Auf Seite-an-Seite umschalten"}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-surface-2 text-xs font-medium text-text-muted hover:text-text-main transition-colors"
+          >
+            <span className="material-symbols-outlined text-[15px]">
+              {layoutMode === "split" ? "view_agenda" : "view_sidebar"}
+            </span>
+            <span className="hidden sm:inline">
+              {layoutMode === "split" ? "Geteilt" : "Split"}
+            </span>
+          </button>
 
           {/* Replay Button */}
           <Button
@@ -287,408 +412,365 @@ export default function FlowClient() {
         </div>
       </div>
 
-      {/* Visual Request Carousel Reel */}
-      {filteredReqs.length > 0 && (
-        <div className="relative">
-          <div
-            ref={carouselRef}
-            className="flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1.5 pt-0.5"
-          >
-            {filteredReqs.map((r, idx) => {
-              const isSelected = sel?.i === r.i;
-              const isErr = r.status === "error" || (r.code && r.code >= 400);
-
-              return (
-                <div
-                  key={r.i}
-                  onClick={() => setSelIdx(idx)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono cursor-pointer transition-all shrink-0 select-none ${
-                    isSelected
-                      ? "bg-slate-900 text-white border-cyan-400 ring-2 ring-cyan-400/30 shadow-md shadow-cyan-500/20 scale-[1.02]"
-                      : "bg-surface-2/80 hover:bg-surface-3 text-text-main border-border hover:border-text-muted/40"
-                  }`}
-                >
-                  <span
-                    className={`size-2 rounded-full ${
-                      isErr
-                        ? "bg-rose-500 animate-pulse"
-                        : r.cached
-                        ? "bg-emerald-400"
-                        : "bg-cyan-400"
-                    }`}
-                  />
-                  <span className="font-semibold">{r.model.split("/").pop()}</span>
-                  <span className="text-[10px] text-text-muted dark:text-slate-400 font-sans">
-                    {r.provider}
-                  </span>
-                  <span className="text-[10px] font-bold text-cyan-500">
-                    {r.total}ms
-                  </span>
-                  {r.cached && (
-                    <span className="material-symbols-outlined text-[13px] text-emerald-400" title="Cache HIT">
-                      bolt
-                    </span>
-                  )}
-                  {r.stream && (
-                    <span className="material-symbols-outlined text-[13px] text-amber-400" title="SSE Stream">
-                      waves
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Pipeline Stepper & Mini HUD */}
-      {sel && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-surface-2/70 dark:bg-slate-900/60 border border-border backdrop-blur-md">
-          {/* Stepper nodes */}
-          <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
-            {path.map((nodeId, idx) => {
-              const n = nodeById(nodeId);
-              return (
-                <div key={nodeId} className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setCard(card === nodeId ? null : nodeId)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
-                      card === nodeId
-                        ? "bg-cyan-500 text-white border-cyan-400 shadow-sm"
-                        : "bg-surface text-text-main border-border hover:border-cyan-400"
-                    }`}
-                  >
-                    <span
-                      className="size-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: DOT_COLOR_HEX[n?.group || "process"] }}
-                    />
-                    <span className="text-[11px] font-semibold">{n?.name || nodeId}</span>
-                  </button>
-                  {idx < path.length - 1 && (
-                    <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0">
-                      arrow_forward
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Quick Metrics */}
-          <div className="flex items-center gap-3 text-xs font-mono text-text-muted shrink-0">
-            <span>
-              Tokens: <strong className="text-text-main">{sel.tokIn}</strong> In /{" "}
-              <strong className="text-text-main">{sel.tokOut}</strong> Out
-            </span>
-            <span className="font-semibold text-text-main">{sel.time}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Vector Mesh Canvas */}
-      <Card padding="none" className="overflow-hidden bg-[#090d16] border-border shadow-2xl relative">
-        {/* Stage Columns Label Header */}
-        <div className="grid grid-cols-4 px-6 py-2 border-b border-white/5 bg-slate-900/40 text-[10px] font-mono tracking-widest uppercase text-slate-400">
-          <div className="flex items-center gap-1.5 text-cyan-400">
-            <span className="size-1.5 rounded-full bg-cyan-400" />
-            1. INGESTION
-          </div>
-          <div className="flex items-center gap-1.5 text-indigo-400">
-            <span className="size-1.5 rounded-full bg-indigo-400" />
-            2. GATEWAY &amp; AUTH
-          </div>
-          <div className="flex items-center gap-1.5 text-amber-400">
-            <span className="size-1.5 rounded-full bg-amber-400" />
-            3. ENGINE &amp; STORAGE
-          </div>
-          <div className="flex items-center justify-end gap-1.5 text-emerald-400">
-            <span className="size-1.5 rounded-full bg-emerald-400" />
-            4. RESPONSE
-          </div>
+      {/* Main Content Area: Split or Stacked */}
+      <div className={`grid gap-4 ${layoutMode === "split" ? "grid-cols-1 xl:grid-cols-12" : "grid-cols-1"}`}>
+        {/* Request List Column (in Split: left 4 cols, in Stacked: order below or above) */}
+        <div className={layoutMode === "split" ? "xl:col-span-4 flex flex-col" : "w-full"}>
+          {RequestListComponent}
         </div>
 
-        {/* SVG Mesh Canvas */}
-        <div className="w-full relative p-2 sm:p-4 overflow-hidden">
-          {/* Subtle Grid Pattern Background */}
-          <div
-            className="w-full relative"
-            style={{
-              backgroundImage: "radial-gradient(rgba(56, 189, 248, 0.12) 1px, transparent 1px)",
-              backgroundSize: "28px 28px",
-            }}
-          >
-            <svg
-              viewBox="0 0 1140 590"
-              preserveAspectRatio="xMidYMid meet"
-              className="w-full h-auto block select-none"
-            >
-              <defs>
-                <marker
-                  id="flow-arrow"
-                  viewBox="0 0 10 10"
-                  refX="8"
-                  refY="5"
-                  markerWidth="5"
-                  markerHeight="5"
-                  orient="auto"
-                >
-                  <path d="M0 0L10 5 0 10z" fill="#334155" />
-                </marker>
-                <marker
-                  id="flow-arrow-hot"
-                  viewBox="0 0 10 10"
-                  refX="8"
-                  refY="5"
-                  markerWidth="6"
-                  markerHeight="6"
-                  orient="auto"
-                >
-                  <path d="M0 0L10 5 0 10z" fill="#38bdf8" />
-                </marker>
-                <filter id="glow-blur" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="3" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-              </defs>
-
-              {/* Edge Connecting Curves */}
-              <g>
-                {E.map((e) => {
-                  const { d } = geo(e);
-                  const isHot = hotKeys.has(key(e));
-                  const isHovered = hoveredEdge === key(e);
-
+        {/* Diagram & Stepper Column (in Split: right 8 cols, in Stacked: w-full) */}
+        <div className={`flex flex-col gap-4 ${layoutMode === "split" ? "xl:col-span-8" : "w-full"}`}>
+          {/* Pipeline Stepper & Mini HUD */}
+          {sel && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-surface-2/70 dark:bg-slate-900/60 border border-border backdrop-blur-md">
+              {/* Stepper nodes */}
+              <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-0.5">
+                {path.map((nodeId, idx) => {
+                  const n = nodeById(nodeId);
                   return (
-                    <g key={key(e)}>
-                      {/* Interactive hover hit area */}
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke="transparent"
-                        strokeWidth="16"
-                        onMouseEnter={() => setHoveredEdge(key(e))}
-                        onMouseLeave={() => setHoveredEdge(null)}
-                        className="cursor-pointer"
-                      />
-
-                      {/* Underglow beam for active paths */}
-                      {isHot && (
-                        <path
-                          d={d}
-                          fill="none"
-                          stroke="#38bdf8"
-                          strokeWidth="8"
-                          opacity="0.25"
-                          filter="url(#glow-blur)"
-                        />
-                      )}
-
-                      {/* Base Core Line */}
-                      <path
-                        id={`fe-${key(e)}`}
-                        d={d}
-                        fill="none"
-                        markerEnd={isHot ? "url(#flow-arrow-hot)" : "url(#flow-arrow)"}
-                        strokeWidth={isHot ? 2.5 : isHovered ? 2 : 1.2}
-                        className={
-                          isHot
-                            ? EDGE_COLOR[e.status || "hot"]
-                            : isHovered
-                            ? "stroke-sky-400"
-                            : "stroke-slate-800"
-                        }
-                        style={{
-                          opacity: isHot ? 1 : hotKeys.size ? 0.15 : 0.45,
-                          transition: "all .3s ease",
-                        }}
-                      />
-
-                      {/* Animated Laser Pulse Dash along active path */}
-                      {isHot && (
-                        <path
-                          d={d}
-                          fill="none"
-                          stroke="#ffffff"
-                          strokeWidth="2"
-                          strokeDasharray="8 20"
-                          style={{
-                            animation: "flowLaser 0.9s linear infinite",
-                            opacity: 0.9,
-                          }}
-                        />
-                      )}
-                    </g>
-                  );
-                })}
-              </g>
-
-              {/* Floating Dynamic Edge Tooltip on Hover */}
-              {hoveredEdge && (
-                <g>
-                  {(() => {
-                    const edgeObj = E.find((e) => key(e) === hoveredEdge);
-                    if (!edgeObj) return null;
-                    const { mx, my } = geo(edgeObj);
-                    return (
-                      <g transform={`translate(${mx}, ${my - 8})`}>
-                        <rect
-                          x="-45"
-                          y="-10"
-                          width="90"
-                          height="20"
-                          rx="6"
-                          fill="#0f172a"
-                          stroke="#38bdf8"
-                          strokeWidth="1"
-                          filter="drop-shadow(0 2px 8px rgba(0,0,0,0.6))"
-                        />
-                        <text
-                          textAnchor="middle"
-                          y="3.5"
-                          fontSize="9"
-                          fontFamily="monospace"
-                          fill="#38bdf8"
-                          fontWeight="bold"
-                        >
-                          {edgeObj.label}
-                        </text>
-                      </g>
-                    );
-                  })()}
-                </g>
-              )}
-
-              {/* Animated Flying Particles Container */}
-              <g id="flow-particles" />
-
-              {/* Nodes using ForeignObject for High-Definition Glass UI */}
-              {N.map((n) => {
-                const isSelected = card === n.id;
-                const isHot = inPath.has(n.id);
-                const isDimmed = inPath.size > 0 && !isHot;
-                const nodeColor = DOT_COLOR_HEX[n.group];
-
-                return (
-                  <foreignObject
-                    key={n.id}
-                    x={n.x}
-                    y={n.y}
-                    width="190"
-                    height="38"
-                    className="overflow-visible"
-                  >
-                    <div
-                      onClick={() => setCard(isSelected ? null : n.id)}
-                      onMouseEnter={() => setHoveredNode(n.id)}
-                      onMouseLeave={() => setHoveredNode(null)}
-                      className={`w-[190px] h-[38px] rounded-xl flex items-center gap-2.5 px-3 cursor-pointer select-none transition-all duration-200 border ${
-                        isSelected
-                          ? "bg-slate-900 text-white border-cyan-400 ring-2 ring-cyan-400/50 shadow-xl shadow-cyan-500/30 scale-[1.04]"
-                          : isHot
-                          ? "bg-slate-900/95 text-white border-sky-400/80 shadow-lg shadow-sky-500/20 scale-[1.02]"
-                          : isDimmed
-                          ? "bg-slate-950/60 text-slate-500 border-slate-800/40 opacity-30 hover:opacity-100 hover:border-slate-600"
-                          : "bg-slate-900/80 text-slate-200 border-slate-800 hover:border-indigo-400 hover:bg-slate-800/80"
-                      }`}
-                    >
-                      {/* Node Icon Tile */}
-                      <div
-                        className="size-6 rounded-lg flex items-center justify-center shrink-0"
-                        style={{
-                          backgroundColor: `${nodeColor}22`,
-                          color: nodeColor,
-                          border: `1px solid ${nodeColor}40`,
-                        }}
+                    <div key={nodeId} className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setCard(card === nodeId ? null : nodeId)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          card === nodeId
+                            ? "bg-cyan-500 text-white border-cyan-400 shadow-sm"
+                            : "bg-surface text-text-main border-border hover:border-cyan-400"
+                        }`}
                       >
-                        <span className="material-symbols-outlined text-[15px]">
-                          {NODE_ICONS[n.id] || "hub"}
-                        </span>
-                      </div>
-
-                      {/* Node Name */}
-                      <span className="text-[11.5px] font-semibold tracking-tight truncate flex-1">
-                        {n.name}
-                      </span>
-
-                      {/* Status indicator pip */}
-                      {isHot ? (
-                        <span className="size-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
-                      ) : (
                         <span
-                          className="size-1.5 rounded-full shrink-0 opacity-60"
-                          style={{ backgroundColor: nodeColor }}
+                          className="size-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: DOT_COLOR_HEX[n?.group || "process"] }}
                         />
+                        <span className="text-[11px] font-semibold">{n?.name || nodeId}</span>
+                      </button>
+                      {idx < path.length - 1 && (
+                        <span className="material-symbols-outlined text-[13px] text-text-muted shrink-0">
+                          arrow_forward
+                        </span>
                       )}
                     </div>
-                  </foreignObject>
-                );
-              })}
-            </svg>
-          </div>
-        </div>
-
-        {/* Selected Node Inspector (Compact Bottom Glass HUD) */}
-        {activeNode && (
-          <div className="p-3 sm:p-4 border-t border-white/10 bg-slate-950/90 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-150">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div
-                  className="size-7 rounded-lg flex items-center justify-center text-white"
-                  style={{ backgroundColor: DOT_COLOR_HEX[activeNode.group] }}
-                >
-                  <span className="material-symbols-outlined text-[18px]">
-                    {NODE_ICONS[activeNode.id] || "hub"}
-                  </span>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-white">{activeNode.name}</h3>
-                    <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
-                      {activeNode.group}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400">{activeNode.desc}</p>
-                </div>
+                  );
+                })}
               </div>
 
-              <button
-                type="button"
-                onClick={() => setCard(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-                aria-label="Schließen"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
+              {/* Quick Metrics */}
+              <div className="flex items-center gap-3 text-xs font-mono text-text-muted shrink-0">
+                <span>
+                  Tokens: <strong className="text-text-main">{sel.tokIn}</strong> In /{" "}
+                  <strong className="text-text-main">{sel.tokOut}</strong> Out
+                </span>
+                <span className="font-semibold text-text-main">{sel.time}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Vector Mesh Canvas */}
+          <Card padding="none" className="overflow-hidden bg-[#090d16] border-border shadow-2xl relative">
+            {/* Stage Columns Label Header */}
+            <div className="grid grid-cols-4 px-6 py-2 border-b border-white/5 bg-slate-900/40 text-[10px] font-mono tracking-widest uppercase text-slate-400">
+              <div className="flex items-center gap-1.5 text-cyan-400">
+                <span className="size-1.5 rounded-full bg-cyan-400" />
+                1. INGESTION
+              </div>
+              <div className="flex items-center gap-1.5 text-indigo-400">
+                <span className="size-1.5 rounded-full bg-indigo-400" />
+                2. GATEWAY &amp; AUTH
+              </div>
+              <div className="flex items-center gap-1.5 text-amber-400">
+                <span className="size-1.5 rounded-full bg-amber-400" />
+                3. ENGINE &amp; STORAGE
+              </div>
+              <div className="flex items-center justify-end gap-1.5 text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-400" />
+                4. RESPONSE
+              </div>
             </div>
 
-            {/* Quick Connection Jumps */}
-            <div className="mt-2.5 flex flex-wrap items-center gap-2 pt-2 border-t border-white/5 text-xs">
-              <span className="text-[10px] font-mono text-slate-400 uppercase">Verbindungen:</span>
-              {nodeInputs.map((e) => (
-                <button
-                  key={key(e)}
-                  type="button"
-                  onClick={() => setCard(e.from)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-indigo-400 hover:border-indigo-500 text-[11px] transition-colors"
+            {/* SVG Mesh Canvas */}
+            <div className="w-full relative p-2 sm:p-4 overflow-hidden">
+              {/* Subtle Grid Pattern Background */}
+              <div
+                className="w-full relative"
+                style={{
+                  backgroundImage: "radial-gradient(rgba(56, 189, 248, 0.12) 1px, transparent 1px)",
+                  backgroundSize: "28px 28px",
+                }}
+              >
+                <svg
+                  viewBox="0 0 1140 590"
+                  preserveAspectRatio="xMidYMid meet"
+                  className="w-full h-auto block select-none"
                 >
-                  <span>← {nodeById(e.from)?.name}</span>
-                </button>
-              ))}
-              {nodeOutputs.map((e) => (
-                <button
-                  key={key(e)}
-                  type="button"
-                  onClick={() => setCard(e.to)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 hover:border-emerald-500 text-[11px] transition-colors"
-                >
-                  <span>→ {nodeById(e.to)?.name}</span>
-                </button>
-              ))}
+                  <defs>
+                    <marker
+                      id="flow-arrow"
+                      viewBox="0 0 10 10"
+                      refX="8"
+                      refY="5"
+                      markerWidth="5"
+                      markerHeight="5"
+                      orient="auto"
+                    >
+                      <path d="M0 0L10 5 0 10z" fill="#334155" />
+                    </marker>
+                    <marker
+                      id="flow-arrow-hot"
+                      viewBox="0 0 10 10"
+                      refX="8"
+                      refY="5"
+                      markerWidth="6"
+                      markerHeight="6"
+                      orient="auto"
+                    >
+                      <path d="M0 0L10 5 0 10z" fill="#38bdf8" />
+                    </marker>
+                    <filter id="glow-blur" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="3" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                  </defs>
+
+                  {/* Edge Connecting Curves */}
+                  <g>
+                    {E.map((e) => {
+                      const { d } = geo(e);
+                      const isHot = hotKeys.has(key(e));
+                      const isHovered = hoveredEdge === key(e);
+
+                      return (
+                        <g key={key(e)}>
+                          {/* Interactive hover hit area */}
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke="transparent"
+                            strokeWidth="16"
+                            onMouseEnter={() => setHoveredEdge(key(e))}
+                            onMouseLeave={() => setHoveredEdge(null)}
+                            className="cursor-pointer"
+                          />
+
+                          {/* Underglow beam for active paths */}
+                          {isHot && (
+                            <path
+                              d={d}
+                              fill="none"
+                              stroke="#38bdf8"
+                              strokeWidth="8"
+                              opacity="0.25"
+                              filter="url(#glow-blur)"
+                            />
+                          )}
+
+                          {/* Base Core Line */}
+                          <path
+                            id={`fe-${key(e)}`}
+                            d={d}
+                            fill="none"
+                            markerEnd={isHot ? "url(#flow-arrow-hot)" : "url(#flow-arrow)"}
+                            strokeWidth={isHot ? 2.5 : isHovered ? 2 : 1.2}
+                            className={
+                              isHot
+                                ? EDGE_COLOR[e.status || "hot"]
+                                : isHovered
+                                ? "stroke-sky-400"
+                                : "stroke-slate-800"
+                            }
+                            style={{
+                              opacity: isHot ? 1 : hotKeys.size ? 0.15 : 0.45,
+                              transition: "all .3s ease",
+                            }}
+                          />
+
+                          {/* Animated Laser Pulse Dash along active path */}
+                          {isHot && (
+                            <path
+                              d={d}
+                              fill="none"
+                              stroke="#ffffff"
+                              strokeWidth="2"
+                              strokeDasharray="8 20"
+                              style={{
+                                animation: "flowLaser 0.9s linear infinite",
+                                opacity: 0.9,
+                              }}
+                            />
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+
+                  {/* Floating Dynamic Edge Tooltip on Hover */}
+                  {hoveredEdge && (
+                    <g>
+                      {(() => {
+                        const edgeObj = E.find((e) => key(e) === hoveredEdge);
+                        if (!edgeObj) return null;
+                        const { mx, my } = geo(edgeObj);
+                        return (
+                          <g transform={`translate(${mx}, ${my - 8})`}>
+                            <rect
+                              x="-45"
+                              y="-10"
+                              width="90"
+                              height="20"
+                              rx="6"
+                              fill="#0f172a"
+                              stroke="#38bdf8"
+                              strokeWidth="1"
+                              filter="drop-shadow(0 2px 8px rgba(0,0,0,0.6))"
+                            />
+                            <text
+                              textAnchor="middle"
+                              y="3.5"
+                              fontSize="9"
+                              fontFamily="monospace"
+                              fill="#38bdf8"
+                              fontWeight="bold"
+                            >
+                              {edgeObj.label}
+                            </text>
+                          </g>
+                        );
+                      })()}
+                    </g>
+                  )}
+
+                  {/* Animated Flying Particles Container */}
+                  <g id="flow-particles" />
+
+                  {/* Nodes using ForeignObject for High-Definition Glass UI */}
+                  {N.map((n) => {
+                    const isSelected = card === n.id;
+                    const isHot = inPath.has(n.id);
+                    const isDimmed = inPath.size > 0 && !isHot;
+                    const nodeColor = DOT_COLOR_HEX[n.group];
+
+                    return (
+                      <foreignObject
+                        key={n.id}
+                        x={n.x}
+                        y={n.y}
+                        width="190"
+                        height="38"
+                        className="overflow-visible"
+                      >
+                        <div
+                          onClick={() => setCard(isSelected ? null : n.id)}
+                          onMouseEnter={() => setHoveredNode(n.id)}
+                          onMouseLeave={() => setHoveredNode(null)}
+                          className={`w-[190px] h-[38px] rounded-xl flex items-center gap-2.5 px-3 cursor-pointer select-none transition-all duration-200 border ${
+                            isSelected
+                              ? "bg-slate-900 text-white border-cyan-400 ring-2 ring-cyan-400/50 shadow-xl shadow-cyan-500/30 scale-[1.04]"
+                              : isHot
+                              ? "bg-slate-900/95 text-white border-sky-400/80 shadow-lg shadow-sky-500/20 scale-[1.02]"
+                              : isDimmed
+                              ? "bg-slate-950/60 text-slate-500 border-slate-800/40 opacity-30 hover:opacity-100 hover:border-slate-600"
+                              : "bg-slate-900/80 text-slate-200 border-slate-800 hover:border-indigo-400 hover:bg-slate-800/80"
+                          }`}
+                        >
+                          {/* Node Icon Tile */}
+                          <div
+                            className="size-6 rounded-lg flex items-center justify-center shrink-0"
+                            style={{
+                              backgroundColor: `${nodeColor}22`,
+                              color: nodeColor,
+                              border: `1px solid ${nodeColor}40`,
+                            }}
+                          >
+                            <span className="material-symbols-outlined text-[15px]">
+                              {NODE_ICONS[n.id] || "hub"}
+                            </span>
+                          </div>
+
+                          {/* Node Name */}
+                          <span className="text-[11.5px] font-semibold tracking-tight truncate flex-1">
+                            {n.name}
+                          </span>
+
+                          {/* Status indicator pip */}
+                          {isHot ? (
+                            <span className="size-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+                          ) : (
+                            <span
+                              className="size-1.5 rounded-full shrink-0 opacity-60"
+                              style={{ backgroundColor: nodeColor }}
+                            />
+                          )}
+                        </div>
+                      </foreignObject>
+                    );
+                  })}
+                </svg>
+              </div>
             </div>
-          </div>
-        )}
-      </Card>
+
+            {/* Selected Node Inspector (Compact Bottom Glass HUD) */}
+            {activeNode && (
+              <div className="p-3 sm:p-4 border-t border-white/10 bg-slate-950/90 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-150">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="size-7 rounded-lg flex items-center justify-center text-white"
+                      style={{ backgroundColor: DOT_COLOR_HEX[activeNode.group] }}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">
+                        {NODE_ICONS[activeNode.id] || "hub"}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-white">{activeNode.name}</h3>
+                        <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
+                          {activeNode.group}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400">{activeNode.desc}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setCard(null)}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+                    aria-label="Schließen"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                  </button>
+                </div>
+
+                {/* Quick Connection Jumps */}
+                <div className="mt-2.5 flex flex-wrap items-center gap-2 pt-2 border-t border-white/5 text-xs">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">Verbindungen:</span>
+                  {nodeInputs.map((e) => (
+                    <button
+                      key={key(e)}
+                      type="button"
+                      onClick={() => setCard(e.from)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-indigo-400 hover:border-indigo-500 text-[11px] transition-colors"
+                    >
+                      <span>← {nodeById(e.from)?.name}</span>
+                    </button>
+                  ))}
+                  {nodeOutputs.map((e) => (
+                    <button
+                      key={key(e)}
+                      type="button"
+                      onClick={() => setCard(e.to)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-emerald-400 hover:border-emerald-500 text-[11px] transition-colors"
+                    >
+                      <span>→ {nodeById(e.to)?.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
