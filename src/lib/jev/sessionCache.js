@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { getSessionModel } from "./sessionModels.js";
 
 /**
  * Per-session cache observability registry.
@@ -60,6 +61,7 @@ function createEntry() {
     cacheFlagged: false,
     createdAt: Date.now(),
     lastActive: Date.now(),
+    turns: [],
   };
 }
 
@@ -89,6 +91,18 @@ export function touchSessionCache(sessionKey, { model, provider, cachedTokens, p
   if (Number(cachedTokens) > 0) entry.cachedTokens += Number(cachedTokens);
   if (Number(promptTokens) > 0) entry.promptTokens += Number(promptTokens);
   if (cacheActive) entry.cacheFlagged = true;
+
+  if (!entry.turns) entry.turns = [];
+  entry.turns.unshift({
+    timestamp: new Date().toISOString(),
+    model: model || null,
+    provider: provider || null,
+    promptTokens: Number(promptTokens) || 0,
+    cachedTokens: Number(cachedTokens) || 0,
+    cacheActive: !!cacheActive,
+  });
+  if (entry.turns.length > 50) entry.turns.pop();
+
   return entry.id;
 }
 
@@ -120,6 +134,25 @@ export function getSessionCacheById(id) {
   pruneExpired(sessions);
   const entry = [...sessions.values()].find((candidate) => candidate.id === id);
   return entry ? toPublicEntry(entry) : null;
+}
+
+/** Full details of a session including turns and sticky model. */
+export function getSessionCacheDetail(id) {
+  if (!id) return null;
+  const sessions = store();
+  pruneExpired(sessions);
+  for (const [key, entry] of sessions.entries()) {
+    if (entry.id === id) {
+      const publicBase = toPublicEntry(entry);
+      const stickyModel = getSessionModel(key);
+      return {
+        ...publicBase,
+        stickyModel: stickyModel || (entry.models.length > 0 ? entry.models[entry.models.length - 1] : null),
+        turns: entry.turns || [],
+      };
+    }
+  }
+  return null;
 }
 
 /**

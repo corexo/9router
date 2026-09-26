@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Badge, Button, Card, CardSkeleton, Input } from "@/shared/components";
 
 function fmtTokens(n) {
@@ -265,35 +266,37 @@ export default function CacheSessionsClient() {
                 <th className="p-4 text-right">Hit-Rate</th>
                 <th className="p-4 text-right">Requests</th>
                 <th className="p-4 text-right">Letzte Aktivität</th>
+                <th className="p-4 text-right">Aktion</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredSessions.length > 0 ? (
                 filteredSessions.map((session) => {
                   const rate = hitRate(session.cachedTokens, session.promptTokens);
-                  const isExpanded = expandedSession === session.cacheId;
                   return (
                     <tr
                       key={session.cacheId}
-                      onClick={() => setExpandedSession(isExpanded ? null : session.cacheId)}
-                      className={`cursor-pointer transition-colors ${
-                        isExpanded ? "bg-surface-2/70" : "hover:bg-surface-2/40"
-                      }`}
+                      className="hover:bg-surface-2/40 transition-colors"
                     >
                       <td className="p-4">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyId(session.cacheId);
-                          }}
-                          className="flex items-center gap-1.5 font-mono text-xs text-text-main hover:text-brand-500 transition-colors"
-                          title={session.cacheId}
-                        >
-                          <span className="font-semibold">{session.cacheId.slice(0, 8)}…</span>
-                          <span className="material-symbols-outlined text-[14px] text-text-muted">
-                            {copiedId === session.cacheId ? "check" : "content_copy"}
-                          </span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/dashboard/cache-sessions/${session.cacheId}`}
+                            className="font-mono text-xs font-bold text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1"
+                            title="Detail-Seite öffnen"
+                          >
+                            <span>{session.cacheId.slice(0, 8)}…</span>
+                          </Link>
+                          <button
+                            onClick={() => copyId(session.cacheId)}
+                            className="p-1 rounded text-text-muted hover:text-text-main transition-colors"
+                            title="Ganze ID kopieren"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">
+                              {copiedId === session.cacheId ? "check" : "content_copy"}
+                            </span>
+                          </button>
+                        </div>
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-2">
@@ -357,12 +360,21 @@ export default function CacheSessionsClient() {
                       <td className="p-4 text-right text-text-muted whitespace-nowrap">
                         {timeAgo(session.lastActive)}
                       </td>
+                      <td className="p-4 text-right">
+                        <Link
+                          href={`/dashboard/cache-sessions/${session.cacheId}`}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold bg-brand-500/10 text-brand-600 dark:text-brand-400 hover:bg-brand-500/20 transition-colors"
+                        >
+                          <span>Details</span>
+                          <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                        </Link>
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan="9" className="p-8 text-center text-text-muted text-sm">
+                  <td colSpan="10" className="p-8 text-center text-text-muted text-sm">
                     {searchQuery
                       ? "Keine Sessions passend zum Suchfilter gefunden."
                       : "Keine aktiven Sessions registriert — starte eine Konversation in Omni."}
