@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { useTheme } from "@/shared/hooks/useTheme";
 
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt"];
 const COMBINED_WEB_ITEM = { id: "web", label: "Web Fetch & Search", icon: "travel_explore", href: "/dashboard/media-providers/web" };
@@ -60,6 +61,18 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
   const [enableTranslator, setEnableTranslator] = useState(false);
+  const { toggleTheme, isDark } = useTheme();
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (res.ok) {
+        window.location.assign("/login");
+      }
+    } catch (err) {
+      console.error("Failed to logout:", err);
+    }
+  };
 
   // Floating hover tooltip state (position: fixed)
   const [tooltip, setTooltip] = useState(null);
@@ -367,9 +380,23 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
       </nav>
 
       {/* Footer Area */}
-      <div className={cn("border-t border-border/50 shrink-0 bg-surface-2/40 dark:bg-neutral-900/30", collapsed ? "p-2 flex flex-col items-center gap-2" : "p-3")}>
+      <div className={cn("border-t border-border/50 shrink-0 bg-surface-2/40 dark:bg-neutral-900/30", collapsed ? "p-2 flex flex-col items-center gap-1.5" : "p-3")}>
         {collapsed ? (
           <>
+            {/* Theme Toggle */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              onMouseEnter={(e) => handleMouseEnter(e, isDark ? "Light Mode" : "Dark Mode", null, "Design")}
+              onMouseLeave={handleMouseLeave}
+              className="flex items-center justify-center size-10 rounded-xl text-text-muted hover:text-text-main hover:bg-surface-2 dark:hover:bg-neutral-800 transition-colors"
+              aria-label="Theme wechseln"
+            >
+              <span className="material-symbols-outlined text-[19px]">
+                {isDark ? "light_mode" : "dark_mode"}
+              </span>
+            </button>
+
             {/* Collapse toggle button at bottom */}
             {onToggleCollapse && (
               <button
@@ -380,15 +407,27 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
                 className="flex items-center justify-center size-10 rounded-xl text-text-muted hover:text-text-main hover:bg-surface-2 dark:hover:bg-neutral-800 transition-colors"
                 aria-label="Sidebar ausklappen"
               >
-                <span className="material-symbols-outlined text-[20px]">dock_to_right</span>
+                <span className="material-symbols-outlined text-[19px]">dock_to_right</span>
               </button>
             )}
+
+            {/* Logout button */}
+            <button
+              type="button"
+              onClick={handleLogout}
+              onMouseEnter={(e) => handleMouseEnter(e, "Abmelden", null, "Sitzung")}
+              onMouseLeave={handleMouseLeave}
+              className="flex items-center justify-center size-10 rounded-xl text-red-500/80 hover:text-red-500 hover:bg-red-500/10 dark:hover:bg-red-500/15 transition-colors"
+              aria-label="Abmelden"
+            >
+              <span className="material-symbols-outlined text-[19px]">logout</span>
+            </button>
 
             {/* Status Beacon */}
             <div
               onMouseEnter={(e) => handleMouseEnter(e, "PiRouter Online", "PORT 9310", "System")}
               onMouseLeave={handleMouseLeave}
-              className="flex items-center justify-center size-8 rounded-xl cursor-default"
+              className="flex items-center justify-center size-8 rounded-xl cursor-default mt-0.5"
             >
               <span className="relative flex size-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -397,17 +436,41 @@ export default function Sidebar({ onClose, collapsed = false, onToggleCollapse }
             </div>
           </>
         ) : (
-          <div className="flex items-center justify-between px-1.5 py-1 text-xs">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="relative flex size-2 shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
-              </span>
-              <span className="font-mono text-[11px] text-text-main font-semibold truncate">PiRouter Online</span>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="flex-1 flex items-center justify-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-text-muted hover:text-text-main hover:bg-surface-2 dark:hover:bg-neutral-800 transition-colors border border-border/50"
+              >
+                <span className="material-symbols-outlined text-[16px]">
+                  {isDark ? "light_mode" : "dark_mode"}
+                </span>
+                <span>{isDark ? "Light" : "Dark"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex-1 flex items-center justify-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-red-500 hover:bg-red-500/10 dark:hover:bg-red-500/15 transition-colors border border-red-500/20 font-medium"
+              >
+                <span className="material-symbols-outlined text-[16px]">logout</span>
+                <span>Logout</span>
+              </button>
             </div>
-            <span className="font-mono text-[10px] text-text-muted shrink-0 px-1.5 py-0.5 rounded bg-surface-3/50 dark:bg-neutral-800">
-              9310
-            </span>
+
+            <div className="flex items-center justify-between px-1 pt-1 text-xs border-t border-border/40">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="relative flex size-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+                </span>
+                <span className="font-mono text-[11px] text-text-main font-semibold truncate">PiRouter Online</span>
+              </div>
+              <span className="font-mono text-[10px] text-text-muted shrink-0 px-1.5 py-0.5 rounded bg-surface-3/50 dark:bg-neutral-800">
+                9310
+              </span>
+            </div>
           </div>
         )}
       </div>

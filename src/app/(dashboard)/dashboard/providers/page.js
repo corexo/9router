@@ -537,6 +537,18 @@ export default function ProvidersPage() {
             Provider einrichten ({unconfiguredProviders.length})
           </Button>
         )}
+        <div className="relative">
+          <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[15px] pointer-events-none">
+            search
+          </span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => useHeaderSearchStore.getState().setQuery(e.target.value)}
+            placeholder="Provider suchen..."
+            className="h-8 pl-8 pr-3 rounded-lg border border-black/10 bg-black/[0.02] text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10 focus:border-primary/50 w-36 sm:w-48"
+          />
+        </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
