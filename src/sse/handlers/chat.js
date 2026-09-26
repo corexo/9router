@@ -140,9 +140,15 @@ export async function handleChat(request, clientRawRequest = null) {
       // only, never Jev's own decision.
       // skipDynamicFetch: no slow upstream /models discovery per request
       const jevCombo = await getComboModels("jev");
-      const activeIds = new Set((await buildModelsList(["llm"], { skipDynamicFetch: true })).map((model) => model.id));
+      const allActiveModels = await buildModelsList(["llm"], { skipDynamicFetch: true });
+      // Exclude combos from active models — Jev must only route to concrete provider models (with slash)
+      const activeConcreteModels = allActiveModels.filter(
+        (m) => m.owned_by !== "combo" && typeof m.id === "string" && m.id.includes("/")
+      );
+      const activeIds = new Set(activeConcreteModels.map((m) => m.id));
+
       let pool = Array.isArray(jevCombo) && jevCombo.length > 0
-        ? jevCombo.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId))
+        ? jevCombo.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId) && typeof modelId === "string" && modelId.includes("/"))
         : [...activeIds];
       // A combo may list models whose provider has no active credentials
       // (e.g. gh/* without a GitHub connection). Jev must never see those:
@@ -152,6 +158,8 @@ export async function handleChat(request, clientRawRequest = null) {
         const intersected = pool.filter((modelId) => activeIds.has(modelId));
         if (intersected.length > 0) pool = intersected;
       }
+      // Strict guarantee: Never pass any combo name to Jev as a candidate
+      pool = pool.filter((modelId) => modelId.includes("/") && !JEV_MODEL_ALIASES.has(modelId));
       // Rough prompt estimate; context-overflow candidates are excluded so Jev
       // never routes a request to a model whose window is too small (#1957).
       const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
