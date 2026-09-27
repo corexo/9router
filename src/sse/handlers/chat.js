@@ -209,6 +209,10 @@ export async function handleChat(request, clientRawRequest = null) {
           return getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1)).vision;
         });
         log.info("JEV", `[9Router-Jev] Vision-Filter: ${availableModels.length}/${beforeVision} Modelle können Bilder verarbeiten`);
+        if (availableModels.length === 0) {
+          log.warn("JEV", "[9Router-Jev] Keine vision-fähigen Modelle verfügbar");
+          return errorResponse(HTTP_STATUS.BAD_REQUEST, "No vision-capable models available for this request");
+        }
       }
       // "Modell-Klasse" slider (dashboard): restrict the pool to the tiers the
       // user allows (small only … frontier only). Applied after the context
