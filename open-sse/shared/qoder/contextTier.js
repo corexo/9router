@@ -80,8 +80,13 @@ export function estimateQoderPromptTokens({ system, messages, tools } = {}) {
   } catch {
     return 0;
   }
+  // Base64 image payloads are bytes, not text tokens. Count each image as a
+  // bounded allowance so Jev does not remove every model before vision routing.
+  const imagePattern = /data:image\/[^;,]+;base64,[A-Za-z0-9+/=]+/g;
+  const images = text.match(imagePattern) || [];
+  text = text.replace(imagePattern, "[image]");
   const cjk = (text.match(CJK_RE) || []).length;
-  return Math.ceil(cjk + (text.length - cjk) / 4);
+  return Math.ceil(cjk + (text.length - cjk) / 4) + images.length * 2000;
 }
 
 function normalizeMode(preference) {
