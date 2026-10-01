@@ -91,6 +91,18 @@ export function setCachedJevDecision(sessionId, estimatedTokens, model, thinking
 }
 
 /**
+ * Clear cached decisions for a specific session (e.g. after failover).
+ */
+export function clearCachedJevDecisionBySession(sessionId) {
+  if (!sessionId) return;
+  const prefix = `${sessionId}_`;
+  const cache = store();
+  for (const k of cache.keys()) {
+    if (k.startsWith(prefix)) cache.delete(k);
+  }
+}
+
+/**
  * Clear cached decisions for a specific model (e.g. after a 413 or error).
  */
 export function clearCachedJevDecisionByModel(model) {

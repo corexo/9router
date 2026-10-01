@@ -1,12 +1,15 @@
 import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest, patchJevTrace, updateLastJevRequest } from "@/lib/jev/requestLog.js";
-import { getSessionModel, sessionKey, setSessionModel } from "@/lib/jev/sessionModels.js";
+import { getSessionModel, sessionKey, setSessionModel, isSessionProviderPenalized } from "@/lib/jev/sessionModels.js";
 import { getCachedJevDecision, setCachedJevDecision } from "@/lib/jev/decisionCache.js";
 import { touchSessionCache } from "@/lib/jev/sessionCache.js";
 import { getModelTier, getTierPreference, TIER_DESCRIPTIONS } from "@/sse/services/modelTiers.js";
+import { finishPaidTrafficRequest, validatePaidTrafficDistribution } from "@/lib/jev/paidTrafficBalancer.js";
 const JEV_API_URL = process.env.JEV_API_URL || "https://jev-ai.pro/api/v1/systemone";
 const MODEL_QUESTION_ID = "target_model";
 const THINKING_QUESTION_ID = "target_thinking";
+
+
 const JEV_MODEL = "jev-1.13.0";
 const DEFAULT_TIMEOUT_MS = 4500;
 const RESPONSE_CAP_CHARS = 32 * 1024; // Jev Inspector: cap stored raw response per trace
@@ -23,11 +26,14 @@ const THINKING_CRITERIA = {
 };
 
 export const JEV_MODEL_ALIASES = new Set(["jev", "nineRouter/jev"]);
-// jev-1m: same Jev routing flow, but the handler narrows the pool to
-// big-context models (KV-cache-friendly append-only sessions).
+// jev-1m: larger client compaction budget, same request-sized candidate filter.
 export const JEV1M_MODEL_ALIASES = new Set(["jev-1m", "nineRouter/jev-1m"]);
+// jev-free: zero-cost / flat-rate pool for subagent & short one-shot tasks.
+export const JEV_FREE_MODEL_ALIASES = new Set(["jev-free", "nineRouter/jev-free"]);
 
 const BASE_INSTRUCTIONS = "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. When tiers are equal or sufficient, prefer zero-cost local/flat-rate models over paid models. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.";
+const NO_TIER_INSTRUCTIONS = "Choose the best model for this request from the provided candidates. Respect context-window limits. Prefer a sticky session when suitable, avoid rate-limited accounts, and consider cost and recent usage. Do not favour a vendor by name.";
+const FREE_INSTRUCTIONS = "Route this subagent or short one-shot task to the fastest, cheapest available model from the provided candidates. Prefer zero-cost or flat-rate models. Prompt caching and session stickiness are irrelevant — just pick the best available free/flat-rate model for the current request.";
 
 function textFromContent(content) {
   if (typeof content === "string") return content;
@@ -55,7 +61,7 @@ export function extractJevPrompt(body) {
  * stickiness). previousModel is only reliable if the client sends it explicitly —
  * plain OpenAI messages carry no model id.
  */
-export function extractSessionContext(body) {
+export function extractSessionContext(body, options = {}) {
   const messages = Array.isArray(body?.messages)
     ? body.messages
     : Array.isArray(body?.input) ? body.input : [];
@@ -64,16 +70,29 @@ export function extractSessionContext(body) {
   const lastAssistant = messages.filter((message) => message?.role === "assistant").at(-1);
   // Clients rarely send a model id back, so fall back to 9Router's own memory of
   // what this conversation was routed to last turn.
-  const previousModel = body?.metadata?.previous_model
+  const sessKey = sessionKey(body);
+  let previousModel = body?.metadata?.previous_model
     ?? body?.previous_model
     ?? lastAssistant?.model
-    ?? getSessionModel(sessionKey(body))
+    ?? getSessionModel(sessKey)
     ?? null;
+
+  if (typeof previousModel === "string" && previousModel.trim()) {
+    previousModel = previousModel.trim();
+    if (sessKey) {
+      const provider = options.providerFromModelId ? options.providerFromModelId(previousModel) : previousModel.split("/")[0];
+      if (isSessionProviderPenalized(sessKey, provider)) {
+        previousModel = null;
+      }
+    }
+  } else {
+    previousModel = null;
+  }
 
   return {
     approxTotalTokens: Math.ceil(totalChars / 4),
     historyTurns: messages.length,
-    previousModel: typeof previousModel === "string" && previousModel.trim() ? previousModel.trim() : null,
+    previousModel,
   };
 }
 
@@ -172,14 +191,14 @@ async function buildEnrichedCriteria(models, options = {}, session = {}) {
         ? `Group usage: ${providerStats.requests} requests, ${Math.round((providerStats.promptTokens || 0) / 1000)}k in / ${Math.round((providerStats.completionTokens || 0) / 1000)}k out recently`
         : "Group usage: none recently";
 
-      const tier = getModelTier(bareModel);
-      const tierStr = tier ? `${tier.toUpperCase()}: ${TIER_DESCRIPTIONS[tier]}` : "Tier: unknown";
+      const tier = options.tierDistributionEnabled === false ? null : getModelTier(model, options.modelTierOverrides);
+      const tierStr = options.tierDistributionEnabled === false ? "" : tier ? `${tier.toUpperCase()}: ${TIER_DESCRIPTIONS[tier]}` : "Tier: unknown";
 
       const window = Number(options.getCapabilitiesForModel?.(provider, bareModel)?.contextWindow) || 0;
       const contextStr = window > 0 ? `Context: ${Math.round(window / 1000)}k` : "Context: unknown";
       const stickyStr = session.previousModel === model ? "Sticky: YES" : "Sticky: NO";
 
-      desc = `${tierStr} | ${groupStr} | Cost: ${costStr} | ${contextStr} | ${stickyStr} | ${usageStr} | ${groupUsageStr} | ${quotaStr}`;
+      desc = [tierStr, groupStr, `Cost: ${costStr}`, contextStr, stickyStr, usageStr, groupUsageStr, quotaStr].filter(Boolean).join(" | ");
     }
 
     result[model] = desc;
@@ -202,7 +221,7 @@ function pickAnswer(data, questionId) {
   const value = typeof node === "object" && node !== null
     ? (node.choice ?? node.selected ?? node.answer ?? node.value)
     : node;
-  return typeof value === "string" ? value.trim() : undefined;
+  return typeof value === "string" ? value.trim() : value && typeof value === "object" ? value : undefined;
 }
 
 // Clamp Jev's generic thinking answer to what the chosen model actually supports.
@@ -262,7 +281,8 @@ export async function selectJevModel(body, availableModels, options = {}) {
     (model) => !JEV_MODEL_ALIASES.has(model) && !JEV1M_MODEL_ALIASES.has(model),
   );
   const apiKey = options.apiKey || process.env.TYPESAFE_API_KEY || "";
-  const fallback = options.defaultModel || process.env.JEV_ROUTER_DEFAULT_MODEL || models[0];
+  const preferredFallback = options.defaultModel || process.env.JEV_ROUTER_DEFAULT_MODEL;
+  const fallback = models.includes(preferredFallback) ? preferredFallback : models[0];
   const warn = options.warn || console.warn;
   // Trace-aware patch: with concurrent requests updateLastJevRequest could patch the wrong entry.
   const patchTrace = (patch) => (options.traceId ? patchJevTrace(options.traceId, patch) : updateLastJevRequest(patch));
@@ -277,30 +297,35 @@ export async function selectJevModel(body, availableModels, options = {}) {
 
   // Check decision cache before hitting API
   const estimatedTokens = body.max_tokens || body.max_completion_tokens || 0;
-  const session = extractSessionContext(body);
+  const session = extractSessionContext(body, options);
   const sessKey = sessionKey(body);
   const cached = getCachedJevDecision(sessKey, estimatedTokens, options.cacheJevTtlMs);
   if (cached && cached.model && models.includes(cached.model)) {
-    options.info?.(`[JEV-CACHE] Hit: ${cached.model} (thinking: ${cached.thinking || "none"})`);
-    patchTrace({ cachedModel: cached.model, cached: true });
-    recordJevUsage({
-      endpoint: "model-router",
-      caller: options.caller || "model-router",
-      questionType: "choice",
-      status: "cached",
-      httpStatus: 200,
-      latencyMs: 0,
-      promptTokens: 0,
-      completionTokens: 0,
-      choice: cached.model,
-    });
-    // Decision-cache hit: the session reuses a routing decision, mark it cache-active.
-    touchSessionCache(sessKey, {
-      model: cached.model,
-      provider: options.providerFromModelId?.(cached.model),
-      cacheActive: true,
-    });
-    return cached.model;
+    const cachedProvider = options.providerFromModelId ? options.providerFromModelId(cached.model) : cached.model.split("/")[0];
+    if (sessKey && isSessionProviderPenalized(sessKey, cachedProvider)) {
+      options.info?.(`[JEV-CACHE] Evicted penalized model: ${cached.model}`);
+    } else {
+      options.info?.(`[JEV-CACHE] Hit: ${cached.model} (thinking: ${cached.thinking || "none"})`);
+      patchTrace({ cachedModel: cached.model, cached: true });
+      recordJevUsage({
+        endpoint: "model-router",
+        caller: options.caller || "model-router",
+        questionType: "choice",
+        status: "cached",
+        httpStatus: 200,
+        latencyMs: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        choice: cached.model,
+      });
+      // Decision-cache hit: the session reuses a routing decision, mark it cache-active.
+      touchSessionCache(sessKey, {
+        model: cached.model,
+        provider: options.providerFromModelId?.(cached.model),
+        cacheActive: true,
+      });
+      return cached.model;
+    }
   }
 
   const controller = new AbortController();
@@ -323,13 +348,13 @@ export async function selectJevModel(body, availableModels, options = {}) {
       ? await buildEnrichedCriteria(models, options, session)
       : buildCriteria(models);
 
-    // The "Modell-Klasse" slider already narrowed the candidate pool in the
-    // handler; its hint tells Jev how to weigh the remaining options.
+    // A disabled distribution sends neither tier labels nor a slider hint to Jev.
     const tierPreference = getTierPreference(options.tierPreference);
     const bigContextHint = options.bigContext
-      ? "Big-context session (jev-1m): this is a long append-only conversation relying on provider KV-cache prefix matching. Strongly prefer the candidate with the largest usable context window; avoid models that would truncate or summarize history."
+      ? "Big-context session (jev-1m): candidates already fit the current context and output reserve. Choose by task needs, not maximum window size; preserve a suitable sticky model for prefix caching."
       : "";
-    const instructions = [BASE_INSTRUCTIONS, tierPreference.hint, bigContextHint].filter(Boolean).join(" ");
+    const instructions = options.overrideInstructions
+      || [options.tierDistributionEnabled === false ? NO_TIER_INSTRUCTIONS : BASE_INSTRUCTIONS, options.tierDistributionEnabled === false ? "" : tierPreference.hint, bigContextHint].filter(Boolean).join(" ");
     const payload = {
       state: buildJevState(body, session),
       model: JEV_MODEL,
@@ -339,10 +364,18 @@ export async function selectJevModel(body, availableModels, options = {}) {
           instructions,
           criteria,
         },
+        ...(options.paidTrafficDistribution?.request ? {
+          paid_account_distribution: {
+            type: "json",
+            instructions: options.paidTrafficDistribution.request.instruction,
+            state: JSON.stringify(options.paidTrafficDistribution.request.usage),
+          },
+        } : {}),
       },
     };
     const requestBody = JSON.stringify(payload);
 
+    options.paidTrafficDistribution?.persistRequest?.();
     logJevRequest({
       prompt: payload.state,
       modelCriteria: criteria,
@@ -393,6 +426,13 @@ export async function selectJevModel(body, availableModels, options = {}) {
       completionTokens: realTokens ? 0 : estimateTextTokens(rawText),
       choice: typeof selected === "string" ? selected : undefined,
     });
+    if (options.paidTrafficDistribution) {
+      const allocation = pickAnswer(data, "paid_account_distribution");
+      const parsedDistribution = validatePaidTrafficDistribution(allocation, options.paidTrafficDistribution.accounts);
+      finishPaidTrafficRequest(rawText.slice(0, RESPONSE_CAP_CHARS), parsedDistribution);
+      options.paidTrafficDistribution.selection = parsedDistribution;
+      if (parsedDistribution) options.paidTrafficDistribution.applyDistribution?.(parsedDistribution);
+    }
     if (typeof selected !== "string" || !models.includes(selected)) {
       patchTrace({ rawSelected: selected, invalid: true });
       options.info?.(`Jev wählte ungültig '${selected}'`);

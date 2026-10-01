@@ -14,6 +14,10 @@ const DEFAULT_SETTINGS = {
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
   quotaVisibility: {},
+  providerBalancer: {
+    enabled: true,
+    providers: {},
+  },
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
@@ -59,6 +63,7 @@ const DEFAULT_SETTINGS = {
   jevDebug: false,
   jevEnrichCriteria: true,
   jevTierPreference: "balanced", // fast | eco | balanced | quality | max — "Modell-Klasse" slider for Jev
+  jevTierDistributionEnabled: true, // false = no quality tiers or slider hint in Jev criteria
   jevExcludeLocalModels: true, // true = exclude models listed in 'local-first' combo from Jev model selection
   cacheJevTtlMs: 10 * 60 * 1000, // 10 minutes cache for Jev decisions per session
   jevProxyTimeoutMs: 5000,
@@ -74,6 +79,11 @@ const DEFAULT_SETTINGS = {
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  cacheKeepAliveEnabled: true,
+  cacheKeepAliveIntervalSecs: 240, // 4 minutes
+  cacheKeepAliveMaxSessions: 3, // Top 3 active sessions
+  cacheKeepAliveMaxIdleMins: 45, // Stop probing after 45m without user activity
+  jevFreePoolModels: undefined, // undefined = all active non-paid models; array = explicit list
 };
 
 async function readRaw() {

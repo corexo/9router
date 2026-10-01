@@ -28,19 +28,30 @@ import { buildModelsList } from "@/app/api/v1/models/route.js";
 import {
   JEV_MODEL_ALIASES,
   JEV1M_MODEL_ALIASES,
+  JEV_FREE_MODEL_ALIASES,
   selectJevModel,
 } from "../services/jevRouter.js";
 import { startJevTrace, tapJevResponse } from "@/lib/jev/requestLog.js";
-import { sessionKey } from "@/lib/jev/sessionModels.js";
-import { touchSessionCache, getSessionCacheMeta, clearSessionCacheByModel } from "@/lib/jev/sessionCache.js";
+import {
+  sessionKey,
+  clearSessionModel,
+  clearSessionModelByModel,
+  recordSessionProviderFailure,
+  clearSessionProviderFailure,
+  getSessionPenalizedProviders,
+} from "@/lib/jev/sessionModels.js";
+import { touchSessionCache, getSessionCacheMeta, clearSessionCacheByModel, getSessionConnection, setSessionConnection, clearSessionConnection } from "@/lib/jev/sessionCache.js";
 import { filterModelsByTierPreference } from "../services/modelTiers.js";
+import { fitsJevContext } from "../services/jevContext.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess, getModelHealth } from "@/lib/modelHealth.js";
-import { clearSessionModelByModel } from "@/lib/jev/sessionModels.js";
-import { clearCachedJevDecisionByModel } from "@/lib/jev/decisionCache.js";
+import { clearCachedJevDecisionByModel, clearCachedJevDecisionBySession } from "@/lib/jev/decisionCache.js";
 import { getPricingForModel } from "open-sse/providers/pricing.js";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { getUsageStats } from "@/lib/db/repos/usageRepo.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { getUsageForProvider as fetchProviderUsage } from "open-sse/services/usage.js";
+import { refreshPaidTrafficOnce, isPaidModel, accountUsageFingerprint, shouldRefreshPaidTraffic, getCachedPaidTrafficSnapshot, cachePaidTrafficSnapshot, getPaidTrafficDistribution, markPaidTrafficRequest, hydratePaidTraffic, getPaidTrafficData } from "@/lib/jev/paidTrafficBalancer.js";
+import { getPricingForModel as getEffectivePricingForModel } from "@/lib/db/repos/pricingRepo.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { stripThinkingSuffix } from "open-sse/translator/concerns/thinkingUnified.js";
 import { estimateQoderPromptTokens } from "open-sse/shared/qoder/contextTier.js";
@@ -52,9 +63,12 @@ const PROVIDER_ALIAS_TO_ID = Object.fromEntries(
 
 // Reverse alias map (ui alias -> canonical provider id) for capability lookups.
 function providerFromModelId(modelId) {
-  const alias = modelId.includes("/") ? modelId.split("/")[0] : modelId;
-  // Registry providers may expose multiple aliases. PROVIDER_ID_TO_ALIAS only
-  // carries the primary one; Workers AI clients commonly use the secondary `cf`.
+  if (!modelId) return null;
+  if (!modelId.includes("/")) {
+    if (modelId === "cf") return "cloudflare-ai";
+    return PROVIDER_ALIAS_TO_ID[modelId] || null;
+  }
+  const alias = modelId.split("/")[0];
   if (alias === "cf") return "cloudflare-ai";
   return PROVIDER_ALIAS_TO_ID[alias] || alias;
 }
@@ -122,7 +136,8 @@ export async function handleChat(request, clientRawRequest = null) {
 
   let routedModel = modelStr;
   const isJev1m = JEV1M_MODEL_ALIASES.has(modelStr);
-  if (isJev1m || JEV_MODEL_ALIASES.has(modelStr)) {
+  const isJevFree = JEV_FREE_MODEL_ALIASES.has(modelStr);
+  if (isJevFree || isJev1m || JEV_MODEL_ALIASES.has(modelStr)) {
     let availableModels = [];
     try {
       const unavailableModels = await getUnavailableModelIds();
@@ -134,12 +149,10 @@ export async function handleChat(request, clientRawRequest = null) {
         if (slash < 0) return modelId;
         return `${providerFromModelId(modelId)}/${modelId.slice(slash + 1)}`;
       }));
-      // A combo named "jev" narrows the candidate pool to exactly its models;
-      // without one, every active LLM stays a candidate. The pool is deliberately
-      // NOT peak-hour filtered: Claude peak hours shape normal combo rotation
-      // only, never Jev's own decision.
+      // An explicit pool list is authoritative; only an unset list uses every active LLM.
+      // The pool is deliberately NOT peak-hour filtered.
       // skipDynamicFetch: no slow upstream /models discovery per request
-      const jevCombo = await getComboModels("jev");
+      const configuredPool = Array.isArray(settings.jevPoolModels) ? settings.jevPoolModels : [];
       const allActiveModels = await buildModelsList(["llm"], { skipDynamicFetch: true });
       // Exclude combos from active models — Jev must only route to concrete provider models (with slash)
       const activeConcreteModels = allActiveModels.filter(
@@ -147,125 +160,182 @@ export async function handleChat(request, clientRawRequest = null) {
       );
       const activeIds = new Set(activeConcreteModels.map((m) => m.id));
 
-      let pool = Array.isArray(jevCombo) && jevCombo.length > 0
-        ? jevCombo.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId) && typeof modelId === "string" && modelId.includes("/"))
-        : [...activeIds];
-      // A combo may list models whose provider has no active credentials
-      // (e.g. gh/* without a GitHub connection). Jev must never see those:
-      // intersect with the active list; keep the raw combo only if the
-      // intersection is empty so a registry hiccup cannot empty the pool.
-      if (pool.length > 0 && activeIds.size > 0) {
-        const intersected = pool.filter((modelId) => activeIds.has(modelId));
-        if (intersected.length > 0) pool = intersected;
-      }
-      // Strict guarantee: Never pass any combo name to Jev as a candidate
-      pool = pool.filter((modelId) => modelId.includes("/") && !JEV_MODEL_ALIASES.has(modelId));
-      // Rough prompt estimate; context-overflow candidates are excluded so Jev
-      // never routes a request to a model whose window is too small (#1957).
-      const estimatedTokens = estimateQoderPromptTokens(body) + Number(body.max_tokens || body.max_completion_tokens || 0);
-      availableModels = pool
-        .filter((modelId) => !unavailableCanonicalIds.has(`${providerFromModelId(modelId)}/${modelId.slice(modelId.indexOf("/") + 1)}`))
-        .filter((modelId) => {
-          if (modelId === "jev" || modelId === "nineRouter/jev") return true;
-          const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
-          const window = Number(caps?.contextWindow) || 0;
-          // Unknown window: keep candidate (Jev may still pick it); only exclude
-          // models that are known to be too small.
-          return window <= 0 || window >= estimatedTokens + 1000;
-        });
-      if (estimatedTokens > 0 && availableModels.length > 0) {
-        log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${jevCombo ? " (Combo 'jev')" : ""}`);
-      }
-      // jev-1m: Pool auf große Kontextfenster eingrenzen (KV-Cache-freundliche
-      // Append-Only-Sessions). Fallback: Top-3 nach Kontext statt leerer Pool.
-      if (isJev1m) {
-        const minContext = Number(settings.jev1mMinContext) || 200000;
-        const beforeBig = availableModels.length;
-        const bigFiltered = availableModels.filter((modelId) => {
-          const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
-          return (Number(caps?.contextWindow) || 0) >= minContext;
-        });
-        if (bigFiltered.length > 0) {
-          availableModels = bigFiltered;
-          log.info("JEV", `[9Router-Jev] jev-1m Big-Context-Filter (>= ${minContext}): ${availableModels.length}/${beforeBig} Modelle`);
-        } else {
-          availableModels = [...availableModels]
-            .map((modelId) => ({
-              modelId,
-              window: Number(getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1))?.contextWindow) || 0,
-            }))
-            .sort((a, b) => b.window - a.window)
-            .slice(0, 3)
-            .map((x) => x.modelId);
-          log.warn("JEV", `[9Router-Jev] jev-1m: kein Modell >= ${minContext} -> Top-3 nach Kontextfenster: ${availableModels.join(", ")}`);
-        }
-      }
-      // Requests mit Bildinhalt brauchen ein vision-fähiges Ziel — Jev darf
-      // nur Kandidaten sehen, die die Bilder auch verarbeiten können.
-      if (detectRequiredCapabilities(body).has("vision")) {
-        const beforeVision = availableModels.length;
-        availableModels = availableModels.filter((modelId) => {
-          if (modelId === "jev" || modelId === "nineRouter/jev") return true;
-          return getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1)).vision;
-        });
-        log.info("JEV", `[9Router-Jev] Vision-Filter: ${availableModels.length}/${beforeVision} Modelle können Bilder verarbeiten`);
-      }
-      // "Modell-Klasse" slider (dashboard): restrict the pool to the tiers the
-      // user allows (small only … frontier only). Applied after the context
-      // filter and before Jev sees the candidates, so a cached decision for a
-      // now-disallowed model is rejected by selectJevModel's pool check too.
-      const tierFilter = filterModelsByTierPreference(availableModels, settings.jevTierPreference);
-      if (tierFilter.applied) {
-        availableModels = tierFilter.models;
-        log.info("JEV", `[9Router-Jev] Modell-Klasse '${tierFilter.preference.id}' (${tierFilter.preference.tiers.join("/")}): ${availableModels.length} Modelle, ${tierFilter.dropped} ausgeschlossen`);
-      } else if (tierFilter.preference.id !== "balanced" && availableModels.length > 0) {
-        log.warn("JEV", `[9Router-Jev] [WARN] Modell-Klasse '${tierFilter.preference.id}' passt zu keinem verfügbaren Modell -> Filter ignoriert`);
-      }
-
-      // "Lokale Modelle ausschließen" (settings.jevExcludeLocalModels !== false):
-      // Models configured in the 'local-first' combo are excluded from Jev's candidate pool.
-      if (settings.jevExcludeLocalModels !== false) {
-        const localComboModels = await getComboModels("local-first");
-        if (Array.isArray(localComboModels) && localComboModels.length > 0) {
-          const localSet = new Set(localComboModels.map((m) => m.toLowerCase()));
-          const beforeCount = availableModels.length;
-          const filtered = availableModels.filter((modelId) => {
-            const raw = modelId.toLowerCase();
-            const bare = raw.includes("/") ? raw.slice(raw.indexOf("/") + 1) : raw;
-            return !localSet.has(raw) && !localSet.has(bare);
+      // jev-free uses the separate jevFreePoolModels setting and skips paid-only / sticky logic.
+      if (isJevFree) {
+        const PAID_PROVIDERS = new Set(["claude", "anthropic", "codex", "chatgpt", "openai", "glm", "glm-cn", "zai"]);
+        const freeConfiguredPool = Array.isArray(settings.jevFreePoolModels) ? settings.jevFreePoolModels : null;
+        let freePool = freeConfiguredPool
+          ? freeConfiguredPool.filter((id) => !JEV_FREE_MODEL_ALIASES.has(id) && typeof id === "string" && id.includes("/"))
+          : [...activeIds].filter((id) => !PAID_PROVIDERS.has(providerFromModelId(id)));
+        // Always restrict to active models with real credentials.
+        freePool = freePool.filter((id) => activeIds.has(id));
+        freePool = freePool.filter((id) => id.includes("/") && !JEV_FREE_MODEL_ALIASES.has(id) && !id.toLowerCase().includes("haiku"));
+        const estimatedTokens = estimateQoderPromptTokens(body);
+        availableModels = freePool
+          .filter((id) => !unavailableCanonicalIds.has(`${providerFromModelId(id)}/${id.slice(id.indexOf("/") + 1)}`))
+          .filter((id) => {
+            const caps = getCapabilitiesForModel(providerFromModelId(id), id.slice(id.indexOf("/") + 1));
+            return fitsJevContext(caps, estimatedTokens, body);
           });
-          if (filtered.length > 0) {
-            const dropped = beforeCount - filtered.length;
-            availableModels = filtered;
-            if (dropped > 0) {
-              log.info("JEV", `[9Router-Jev] Lokale Modelle ('local-first') ausgeschlossen: ${dropped} Modelle entfernt (${availableModels.length} verbleiben)`);
+        if (detectRequiredCapabilities(body).has("vision")) {
+          availableModels = availableModels.filter((id) =>
+            getCapabilitiesForModel(providerFromModelId(id), id.slice(id.indexOf("/") + 1)).vision
+          );
+        }
+        log.info("JEV", `[9Router-Jev-Free] Pool: ${availableModels.length}/${freePool.length} Modelle${freeConfiguredPool ? " (konfiguriert)" : " (auto-free)"}`);
+      } else {
+        let pool = settings.jevPoolModels !== undefined && Array.isArray(settings.jevPoolModels)
+          ? configuredPool.filter((modelId) => !JEV_MODEL_ALIASES.has(modelId) && typeof modelId === "string" && modelId.includes("/"))
+          : [...activeIds];
+        // Never offer configured models without active provider credentials.
+        pool = pool.filter((modelId) => activeIds.has(modelId));
+        // Strict guarantee: Never pass any combo name to Jev as a candidate; exclude Haiku models (system combo)
+        pool = pool.filter((modelId) => modelId.includes("/") && !JEV_MODEL_ALIASES.has(modelId) && !modelId.toLowerCase().includes("haiku"));
+        // Rough prompt estimate; context-overflow candidates are excluded so Jev
+        // never routes a request to a model whose window is too small (#1957).
+        const estimatedTokens = estimateQoderPromptTokens(body);
+        availableModels = pool
+          .filter((modelId) => !unavailableCanonicalIds.has(`${providerFromModelId(modelId)}/${modelId.slice(modelId.indexOf("/") + 1)}`))
+          .filter((modelId) => {
+            const caps = getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1));
+            return fitsJevContext(caps, estimatedTokens, body);
+          });
+        if (estimatedTokens > 0 && availableModels.length > 0) {
+          log.info("JEV", `[9Router-Jev] Kontextfilter: ~${estimatedTokens} Tokens -> ${availableModels.length}/${pool.length} Modelle passen${configuredPool.length ? " (eigene Jev-Modellliste)" : ""}`);
+        }
+        // Requests mit Bildinhalt brauchen ein vision-fähiges Ziel — Jev darf
+        // nur Kandidaten sehen, die die Bilder auch verarbeiten können.
+        if (detectRequiredCapabilities(body).has("vision")) {
+          const beforeVision = availableModels.length;
+          availableModels = availableModels.filter((modelId) => {
+            if (modelId === "jev" || modelId === "nineRouter/jev") return true;
+            return getCapabilitiesForModel(providerFromModelId(modelId), modelId.slice(modelId.indexOf("/") + 1)).vision;
+          });
+          log.info("JEV", `[9Router-Jev] Vision-Filter: ${availableModels.length}/${beforeVision} Modelle können Bilder verarbeiten`);
+        }
+        // The model-class preference is a soft Jev prompt hint only; it never removes candidates.
+        if (settings.jevTierDistributionEnabled !== false) {
+          const tierFilter = filterModelsByTierPreference(availableModels, settings.jevTierPreference);
+          availableModels = tierFilter.models;
+          log.info("JEV", `[9Router-Jev] Modell-Klasse '${tierFilter.preference.id}' als Präferenz; Pool bleibt vollständig (${availableModels.length} Modelle)`);
+        }
+
+        // Local-first exclusion applies only to the unconfigured default pool;
+        // an explicit checkbox selection always wins.
+        if (!Array.isArray(settings.jevPoolModels) && settings.jevExcludeLocalModels !== false) {
+          const localComboModels = await getComboModels("local-first");
+          if (Array.isArray(localComboModels) && localComboModels.length > 0) {
+            const localSet = new Set(localComboModels.map((m) => m.toLowerCase()));
+            const beforeCount = availableModels.length;
+            const filtered = availableModels.filter((modelId) => {
+              const raw = modelId.toLowerCase();
+              const bare = raw.includes("/") ? raw.slice(raw.indexOf("/") + 1) : raw;
+              return !localSet.has(raw) && !localSet.has(bare);
+            });
+            if (filtered.length > 0) {
+              const dropped = beforeCount - filtered.length;
+              availableModels = filtered;
+              if (dropped > 0) {
+                log.info("JEV", `[9Router-Jev] Lokale Modelle ('local-first') ausgeschlossen: ${dropped} Modelle entfernt (${availableModels.length} verbleiben)`);
+              }
             }
           }
+        }
+
+        // Filter out providers penalized for this session (e.g. Codex quota exhausted)
+        const currentSessKey = sessionKey(body);
+        const penalizedProviders = currentSessKey ? getSessionPenalizedProviders(currentSessKey) : new Set();
+        if (penalizedProviders.size > 0) {
+          const nonPenalized = availableModels.filter((m) => !penalizedProviders.has(providerFromModelId(m)));
+          if (nonPenalized.length > 0) {
+            log.info("JEV", `[FAILOVER] Session-Penalized Filter: excluded [${[...penalizedProviders].join(",")}], ${nonPenalized.length}/${availableModels.length} models remaining`);
+            availableModels = nonPenalized;
+          } else {
+            log.warn("JEV", `[FAILOVER] All available models belong to penalized providers [${[...penalizedProviders].join(",")}], keeping full pool`);
+          }
+        }
+
+        // If session had a failover (penalized providers active), prioritize GLM models
+        if (penalizedProviders.size > 0 && availableModels.some((m) => providerFromModelId(m) === "glm" || m.startsWith("glm/"))) {
+          availableModels.sort((a, b) => {
+            const aIsGlm = providerFromModelId(a) === "glm" || a.startsWith("glm/");
+            const bIsGlm = providerFromModelId(b) === "glm" || b.startsWith("glm/");
+            if (aIsGlm && !bIsGlm) return -1;
+            if (!aIsGlm && bIsGlm) return 1;
+            return 0;
+          });
         }
       }
     } catch (error) {
       log.warn("JEV", `[9Router-Jev] [WARN] Modell-Registry nicht verfügbar: ${error?.message || error}`);
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Jev-Modell-Pool konnte nicht sicher ermittelt werden");
     }
-    jevTraceId = startJevTrace({ model: body?.model, body: clientRawRequest?.body ?? body, mode: isJev1m ? "jev-1m" : "jev" });
+    if (availableModels.length === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Kein aktives Jev-Modell erfüllt Kontextbudget und erforderliche Fähigkeiten");
+    jevTraceId = startJevTrace({ model: body?.model, body: clientRawRequest?.body ?? body, mode: isJev1m ? "jev-1m" : isJevFree ? "jev-free" : "jev" });
+    const paidTraffic = await refreshPaidTrafficOnce(async () => {
+      await hydratePaidTraffic();
+      const paidModels = (await Promise.all(availableModels.map(async (id) => {
+        const provider = providerFromModelId(id);
+        const model = id.slice(id.indexOf("/") + 1);
+        const pricing = id.includes("/") ? await getEffectivePricingForModel(provider, model) : null;
+        return isPaidModel(id, providerFromModelId, () => pricing) ? id : null;
+      }))).filter(Boolean);
+      if (!paidModels.length) return null;
+      const balancerAccounts = (await getProviderConnections()).filter((c) => c.isActive !== false && ["codex", "chatgpt", "openai", "glm", "glm-cn", "zai", "claude", "anthropic"].includes(c.provider));
+      const targetProvider = balancerAccounts.find((account) => paidModels.some((id) => providerFromModelId(id) === account.provider))?.provider;
+      if (!targetProvider) return null;
+      const accounts = balancerAccounts.filter((account) => account.provider === targetProvider);
+      const usageSnapshot = await Promise.all(accounts.map(async (account) => {
+        let usage = getCachedPaidTrafficSnapshot(account.provider);
+        if (!usage) {
+          try { usage = await fetchProviderUsage(account); cachePaidTrafficSnapshot(account.provider, usage); }
+          catch { usage = null; }
+        }
+        const quota = usage?.quotas?.find?.((q) => /session|weekly|monthly|usage/i.test(q.name || q.label || "")) || usage?.[0] || {};
+        return {
+          id: account.id, provider: account.provider,
+          account: account.displayName || account.name || account.email || account.id.slice(0, 8),
+          used: quota.used ?? quota.usage ?? quota.consumed ?? null,
+          limit: quota.limit ?? quota.total ?? null,
+          resetAt: quota.resetAt ?? quota.reset_at ?? null,
+          sessionStartedAt: usage?.sessionStartedAt ?? null,
+          sessionDurationMs: usage?.sessionDurationMs ?? null,
+          usageUpdatedAt: usage?.updatedAt ?? usage?.timestamp ?? null,
+          available: account.isActive !== false && account.testStatus !== "unavailable",
+        };
+      }));
+      const snapshot = { provider: targetProvider, accounts: usageSnapshot, lastRequestedAt: getPaidTrafficData().lastRequestedAt, fingerprint: getPaidTrafficData().snapshot?.fingerprint };
+      const fingerprint = accountUsageFingerprint(usageSnapshot);
+      const previousDistribution = getPaidTrafficDistribution(targetProvider);
+      if (!shouldRefreshPaidTraffic(snapshot, fingerprint)) {
+        return previousDistribution ? { provider: targetProvider, accounts: usageSnapshot, selection: previousDistribution, cached: true } : null;
+      }
+      const requestData = { purpose: "allocation", provider: targetProvider, usage: usageSnapshot, instruction: "Return a JSON object mapping only supplied account IDs to traffic weights from 0 to 100; weights must sum to 100. Consider usage, session duration/context cache, and each quota resetAt. Do not invent accounts or trigger resets." };
+      return { provider: targetProvider, accounts: usageSnapshot, request: requestData };
+    });
     routedModel = await selectJevModel(body, availableModels, {
       traceId: jevTraceId,
       bigContext: isJev1m,
       apiKey: settings.jevApiKey,
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
-      cacheJevTtlMs: settings.cacheJevTtlMs,
+      cacheJevTtlMs: isJevFree ? 0 : settings.cacheJevTtlMs, // no cache for one-shot subagent tasks
       tierPreference: settings.jevTierPreference,
+      tierDistributionEnabled: isJevFree ? false : settings.jevTierDistributionEnabled !== false,
+      overrideInstructions: isJevFree ? "Route this subagent or short one-shot task to the fastest, cheapest available model from the provided candidates. Prefer zero-cost or flat-rate models. Prompt caching and session stickiness are irrelevant — just pick the best available free/flat-rate model for the current request." : undefined,
+      modelTierOverrides: settings.jevModelTiers || {},
       getThinkingLevels,
       providerFromModelId,
       warn: (message) => log.warn("JEV", message),
       info: (message) => log.info("JEV", `[9Router-Jev] ${message}`),
       debug: !!process.env.DEBUG_JEV || !!settings.jevDebug,
       enrichCriteria: settings.jevEnrichCriteria !== false,
-      getPricingForModel,
+      getPricingForModel: (provider, model) => getEffectivePricingForModel(provider, model),
       getCapabilitiesForModel,
       getModelHealth,
       getProviderConnections,
       getUsageStats,
+      paidTrafficDistribution: isJevFree ? null : (paidTraffic?.request ? { ...paidTraffic, persistRequest: () => markPaidTrafficRequest({ provider: paidTraffic.provider, accounts: paidTraffic.accounts }, paidTraffic.request) } : paidTraffic),
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
     // routedModel may carry a Jev-picked thinking suffix "model(level)" — strip it before
@@ -284,11 +354,27 @@ export async function handleChat(request, clientRawRequest = null) {
   // touched the registry inside selectJevModel; non-Jev requests are recorded here.
   const sessKey = sessionKey(body);
   if (sessKey) {
+    const isConcrete = typeof routedModel === "string" && routedModel.includes("/");
+    const resolvedProvider = providerFromModelId(routedModel);
+    // Keep lightweight probePrefix (first 2-4 messages) so keep-alive daemon can refresh prompt cache upstream
+    const probeMessages = Array.isArray(body?.messages)
+      ? body.messages.slice(0, 4).map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? m.content.filter(p => p?.type === "text") : ""),
+        }))
+      : null;
+
     if (!(isJev1m || JEV_MODEL_ALIASES.has(modelStr))) {
       touchSessionCache(sessKey, {
-        model: routedModel,
-        provider: providerFromModelId(routedModel),
+        model: isConcrete ? routedModel : null,
+        provider: resolvedProvider,
         promptTokens: estimateQoderPromptTokens(body),
+        probePrefix: probeMessages ? { messages: probeMessages, model: routedModel, provider: resolvedProvider } : undefined,
+      });
+    } else if (probeMessages) {
+      // For Jev sessions, update probePrefix too
+      touchSessionCache(sessKey, {
+        probePrefix: { messages: probeMessages, model: routedModel, provider: resolvedProvider },
       });
     }
   }
@@ -345,7 +431,8 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
       comboName: routedModel,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      providerBalancer: settings.providerBalancer,
     }));
   }
 
@@ -364,7 +451,8 @@ export async function handleChat(request, clientRawRequest = null) {
       ),
       log,
       comboName: routedModel,
-      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
+      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings),
+      providerBalancer: settings.providerBalancer,
     }));
   }
 
@@ -448,12 +536,26 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  const sessKey = sessionKey(body);
+  const preferredConnectionId = sessKey ? getSessionConnection(sessKey) : null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId: excludeConnectionIds.size === 0 ? preferredConnectionId : null,
+
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
+      if (sessKey) {
+        clearSessionConnection(sessKey);
+        const { triggered, count } = recordSessionProviderFailure(sessKey, provider);
+        if (triggered) {
+          clearSessionModel(sessKey);
+          clearCachedJevDecisionBySession(sessKey);
+          log.warn("FAILOVER", `[FAILOVER] Session ${sessKey.slice(0, 8)} exceeded failure threshold (${count}) on provider '${provider}'. Evicting sticky model and penalizing provider for session.`);
+        }
+      }
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
@@ -524,6 +626,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         recordModelSuccess(provider, model);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
+        if (sessKey) {
+          clearSessionProviderFailure(sessKey, provider);
+          if (credentials.connectionId) {
+            setSessionConnection(sessKey, credentials.connectionId);
+          }
+        }
       }
     });
 
@@ -536,6 +644,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       status: result.status,
       message: result.error,
     });
+
+    // Check if failure is rate limit (429) or quota exhausted and record failure for session
+    if (sessKey && (result.status === 429 || result.status === 402 || result.status === 403 || String(result.error).toLowerCase().includes("quota") || String(result.error).toLowerCase().includes("rate limit"))) {
+      const { triggered, count } = recordSessionProviderFailure(sessKey, provider);
+      if (triggered) {
+        clearSessionModel(sessKey);
+        clearCachedJevDecisionBySession(sessKey);
+        clearSessionConnection(sessKey);
+        log.warn("FAILOVER", `[FAILOVER] Session ${sessKey.slice(0, 8)} reached ${count} quota/rate-limit failures on provider '${provider}'. Evicting sticky model and penalizing provider for session.`);
+      }
+    }
 
     // If request failed with 413 or context window overflow, clear Jev decision cache
     // and session stickiness for this model so it is not picked again on next turn.

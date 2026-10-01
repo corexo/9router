@@ -542,11 +542,14 @@ export async function buildModelsList(kindFilter, options = {}) {
 
   // Virtual Jev router model: advertised for clients/model pickers, resolved before provider routing.
   if (kindFilter.includes(LLM_KIND)) {
-    models.unshift({ id: "jev", object: "model", owned_by: "9router" });
-    models.unshift({ id: "nineRouter/jev", object: "model", owned_by: "9router" });
-    // Virtual big-context Jev variant (pool restricted to large-context models).
-    models.unshift({ id: "jev-1m", object: "model", owned_by: "9router" });
-    models.unshift({ id: "nineRouter/jev-1m", object: "model", owned_by: "9router" });
+    // Client compaction budgets; both variants share the dynamically filtered pool.
+    for (const [id, contextWindow] of [
+      ["jev", 200000], ["nineRouter/jev", 200000],
+      ["jev-1m", 1000000], ["nineRouter/jev-1m", 1000000],
+      ["jev-free", 200000], ["nineRouter/jev-free", 200000],
+    ]) {
+      models.unshift({ id, object: "model", owned_by: "9router", context_length: contextWindow, capabilities: { contextWindow } });
+    }
   }
 
   // Hide models the health registry marked as permanently unusable (unsupported /

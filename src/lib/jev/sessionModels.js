@@ -12,7 +12,54 @@ import { createHash } from "node:crypto";
  */
 const STORE_KEY = Symbol.for("9router.jevSessionModels");
 const MAX_SESSIONS = 200;
-const TTL_MS = 2 * 60 * 60 * 1000;
+const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours persistence window
+
+let hydrationPromise = null;
+
+function persistModel(key, entry) {
+  if (!key || !entry) return;
+  Promise.resolve().then(async () => {
+    try {
+      const { makeKv } = await import("../db/helpers/kvStore.js");
+      const kv = makeKv("jevSessionModels");
+      await kv.set(key, entry);
+    } catch {}
+  });
+}
+
+function removePersistedModel(key) {
+  if (!key) return;
+  Promise.resolve().then(async () => {
+    try {
+      const { makeKv } = await import("../db/helpers/kvStore.js");
+      const kv = makeKv("jevSessionModels");
+      await kv.remove(key);
+    } catch {}
+  });
+}
+
+export async function hydrateSessionModelsFromDb() {
+  if (hydrationPromise) return hydrationPromise;
+  hydrationPromise = (async () => {
+    try {
+      const { makeKv } = await import("../db/helpers/kvStore.js");
+      const kv = makeKv("jevSessionModels");
+      const all = await kv.getAll();
+      const sessions = store();
+      const now = Date.now();
+      for (const [key, entry] of Object.entries(all || {})) {
+        if (entry && typeof entry === "object" && entry.at && (now - entry.at <= TTL_MS)) {
+          if (!sessions.has(key)) {
+            sessions.set(key, entry);
+          }
+        } else if (entry && entry.at) {
+          kv.remove(key).catch(() => {});
+        }
+      }
+    } catch {}
+  })();
+  return hydrationPromise;
+}
 
 function store() {
   if (!globalThis[STORE_KEY]) globalThis[STORE_KEY] = new Map();
@@ -42,6 +89,7 @@ export function getSessionModel(key) {
   if (!entry) return null;
   if (Date.now() - entry.at > TTL_MS) {
     store().delete(key);
+    removePersistedModel(key);
     return null;
   }
   return entry.model;
@@ -51,20 +99,133 @@ export function setSessionModel(key, model) {
   if (!key || typeof model !== "string" || !model) return;
   const sessions = store();
   sessions.delete(key);
-  sessions.set(key, { model, at: Date.now() });
+  const entry = { model, at: Date.now() };
+  sessions.set(key, entry);
+  persistModel(key, entry);
   // Map preserves insertion order, so the oldest entry is the first key.
-  while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
+  while (sessions.size > MAX_SESSIONS) {
+    const oldest = sessions.keys().next().value;
+    sessions.delete(oldest);
+    removePersistedModel(oldest);
+  }
 }
 
 export function clearSessionModel(key) {
   if (!key) return;
   store().delete(key);
+  removePersistedModel(key);
 }
 
 export function clearSessionModelByModel(model) {
   if (!model) return;
   const sessions = store();
   for (const [k, v] of sessions.entries()) {
-    if (v.model === model) sessions.delete(k);
+    if (v.model === model) {
+      sessions.delete(k);
+      removePersistedModel(k);
+    }
   }
 }
+
+/**
+ * Session failure tracking & provider penalties
+ */
+const FAILURES_STORE = Symbol.for("9router.sessionFailures");
+const PENALTIES_STORE = Symbol.for("9router.sessionPenalties");
+export const DEFAULT_FAILURE_THRESHOLD = 3;
+export const DEFAULT_PENALTY_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function failuresStore() {
+  if (!globalThis[FAILURES_STORE]) globalThis[FAILURES_STORE] = new Map();
+  return globalThis[FAILURES_STORE];
+}
+
+function penaltiesStore() {
+  if (!globalThis[PENALTIES_STORE]) globalThis[PENALTIES_STORE] = new Map();
+  return globalThis[PENALTIES_STORE];
+}
+
+/**
+ * Records a failure for a session + provider pair.
+ * When failures reach the threshold, penalizes the provider for this session.
+ * Returns { triggered: boolean, count: number, penalizedUntil: number | null }
+ */
+export function recordSessionProviderFailure(sessKey, provider, threshold = DEFAULT_FAILURE_THRESHOLD, penaltyTtlMs = DEFAULT_PENALTY_TTL_MS) {
+  if (!sessKey || !provider) return { triggered: false, count: 0, penalizedUntil: null };
+
+  const key = `${sessKey}:${provider}`;
+  const failures = failuresStore();
+  const current = (failures.get(key) || 0) + 1;
+  failures.set(key, current);
+
+  if (current >= threshold) {
+    const penalizedUntil = Date.now() + penaltyTtlMs;
+    const penalties = penaltiesStore();
+    if (!penalties.has(sessKey)) penalties.set(sessKey, new Map());
+    penalties.get(sessKey).set(provider, penalizedUntil);
+    // Reset counter once penalty is triggered
+    failures.delete(key);
+    return { triggered: true, count: current, penalizedUntil };
+  }
+
+  return { triggered: false, count: current, penalizedUntil: null };
+}
+
+/**
+ * Checks if a provider is currently penalized for a session.
+ */
+export function isSessionProviderPenalized(sessKey, provider) {
+  if (!sessKey || !provider) return false;
+  const penalties = penaltiesStore();
+  const sessionPenalties = penalties.get(sessKey);
+  if (!sessionPenalties) return false;
+
+  const until = sessionPenalties.get(provider);
+  if (!until) return false;
+
+  if (Date.now() > until) {
+    sessionPenalties.delete(provider);
+    if (sessionPenalties.size === 0) penalties.delete(sessKey);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Returns a Set of currently penalized provider IDs for a session.
+ */
+export function getSessionPenalizedProviders(sessKey) {
+  if (!sessKey) return new Set();
+  const penalties = penaltiesStore();
+  const sessionPenalties = penalties.get(sessKey);
+  if (!sessionPenalties) return new Set();
+
+  const now = Date.now();
+  const result = new Set();
+  for (const [provider, until] of sessionPenalties.entries()) {
+    if (now <= until) {
+      result.add(provider);
+    } else {
+      sessionPenalties.delete(provider);
+    }
+  }
+  if (sessionPenalties.size === 0) penalties.delete(sessKey);
+  return result;
+}
+
+/**
+ * Clears failures and penalties for a session + provider upon success.
+ */
+export function clearSessionProviderFailure(sessKey, provider) {
+  if (!sessKey || !provider) return;
+  failuresStore().delete(`${sessKey}:${provider}`);
+}
+
+/**
+ * Resets all failures and penalties (for testing).
+ */
+export function clearAllSessionFailures() {
+  failuresStore().clear();
+  penaltiesStore().clear();
+}
+
