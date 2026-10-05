@@ -4,14 +4,16 @@ import { getSessionCacheSnapshot } from "@/lib/jev/sessionCache.js";
 export const dynamic = "force-dynamic";
 
 /** Per-session cache observability snapshot (in-memory registry, newest first). */
-export async function GET() {
+export async function GET(request) {
   try {
+    const showPath = request && new URL(request.url).searchParams.get("cockpit") === "true";
     const sessions = getSessionCacheSnapshot()
-      .map(({ cacheId, state, models, providers, cachedTokens, promptTokens, requests, cacheActive, lastActive }) => ({
+      .map(({ cacheId, state, models, providers, piProjectPath, cachedTokens, promptTokens, requests, cacheActive, lastActive }) => ({
         cacheId,
         state,
         models,
         provider: providers[0] || null,
+        ...(showPath ? { piProjectPath: piProjectPath || null } : {}),
         cacheActive,
         cachedTokens,
         promptTokens,
