@@ -31,6 +31,7 @@ import {
   JEV_FREE_MODEL_ALIASES,
   selectJevModel,
 } from "../services/jevRouter.js";
+import { adjudicateProviderError } from "../services/providerErrorAdjudication.js";
 import { startJevTrace, tapJevResponse } from "@/lib/jev/requestLog.js";
 import {
   sessionKey,
@@ -544,6 +545,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  let errorAdjudications = 0;
   const sessKey = sessionKey(body);
   const preferredConnectionId = sessKey ? getSessionConnection(sessKey) : null;
 
@@ -688,9 +690,24 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.
-    const shouldFallback = provider === "antigravity" && quotaResetMs
+    let shouldFallback = provider === "antigravity" && quotaResetMs
       ? true
       : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
+
+    // Jev only adjudicates ambiguous errors, once per request. Obvious Gemini
+    // free-tier exhaustion is classified locally and never retried on this account.
+    if (!shouldFallback && errorAdjudications === 0 && result.status >= 400 && result.status < 500
+      && !/context|invalid request|malformed|unsupported/i.test(String(result.error))) {
+      errorAdjudications += 1;
+      const adjudication = await adjudicateProviderError({
+        provider, model, status: result.status, error: result.error,
+        eligibleModels: [], apiKey: chatSettings.jevApiKey,
+      });
+      if (adjudication?.action === "next_account") {
+        // Persist a bounded lock before moving to the next eligible account.
+        shouldFallback = (await markAccountUnavailable(credentials.connectionId, 429, result.error, provider, model)).shouldFallback;
+      }
+    }
 
     if (shouldFallback) {
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);

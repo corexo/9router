@@ -69,7 +69,9 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        const delaySeconds = /^([0-9]+(?:\.[0-9]+)?)s$/.exec(parsed.retryAfter || "");
+        const retryAtMs = delaySeconds ? Date.now() + Math.min(Number(delaySeconds[1]) * 1000, 30 * 60 * 1000) : null;
+        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs || retryAtMs };
       }
     } catch { /* fall through to default parsing */ }
   }
