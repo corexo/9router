@@ -103,8 +103,10 @@ describe("session cache registry", () => {
     touchSessionCache(KEY_A, { model: "glm/glm-4.6", provider: "glm", promptTokens: 10 });
     const [entry] = getSessionCacheSnapshot();
     expect(Object.keys(entry).sort()).toEqual([
-      "cacheActive", "cacheId", "cachedTokens", "createdAt", "lastActive",
-      "models", "promptTokens", "providers", "requests", "state",
+      "cacheActive", "cacheId", "cachedTokens", "connectionId", "createdAt",
+      "hasProbePrefix", "keepAliveEnabled", "keepAlivePingCount", "lastActive",
+      "lastKeepAliveAt", "lastKeepAliveStatus", "models", "piProjectPath",
+      "promptTokens", "providers", "requests", "state", "ttlRemainingSecs",
     ]);
     const raw = JSON.stringify(entry);
     expect(raw).not.toContain("messages");
