@@ -147,10 +147,8 @@ export const MODEL_CAPABILITIES = {
 
 const KIRO_GPT_5_6_CAPABILITIES = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 };
 
-// Codex OAuth (ChatGPT backend) — per-model context window reported by upstream
-// (lower than OpenAI API's 1.05M). Sol differs from Terra/Luna. #2720
-const CODEX_GPT_56_SOL_CAPS  = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 };
-const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 };
+const CODEX_GPT_56_SOL_CAPS  = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 };
+const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 };
 
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
@@ -171,11 +169,11 @@ export const PROVIDER_CAPABILITIES = {
     "deepseek-ai/deepseek-v4-flash": { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
   },
   "codex": {
-    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
-    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 },
-    "gpt-6-sol-review":          { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 },
-    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
-    "gpt-6-luna-review":         { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-sol-review":          { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-luna-review":         { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
     "gpt-5.6-sol":               CODEX_GPT_56_SOL_CAPS,
     "gpt-5.6-sol-review":        CODEX_GPT_56_SOL_CAPS,
     "gpt-5.6-terra":             CODEX_GPT_56_DEFAULT_CAPS,
@@ -200,9 +198,9 @@ export const PROVIDER_CAPABILITIES = {
     "gpt-5.6-luna-thinking-agentic": KIRO_GPT_5_6_CAPABILITIES,
   },
   "openai": {
-    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
-    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 },
-    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 128000 },
   },
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
   // config (contextWindow=maxInputTokens, maxOutput=maxOutputTokens, vision=
@@ -394,10 +392,10 @@ export const PATTERN_CAPABILITIES = [
   // reasoning_effort is only read by z.ai from GLM-5.2 onward (docs.z.ai/guides/capabilities/thinking) —
   // older GLM (4.x, 5.0, 5.1, 5-turbo, 5v-turbo) ignore it, so gate it per exact version, not the "*glm-5*" catch-all.
   // Z.ai rejects enable_thinking:false for GLM-5.3: it is always-reasoning and accepts low|high|max only.
-  { pattern: "*glm-5.3*",       caps: { reasoning: true, thinkingFormat: "zai", thinkingCanDisable: false, thinkingEffortSupported: true, contextWindow: 200000, maxOutput: 128000 } },
-  { pattern: "*glm-5.2*",       caps: { reasoning: true, thinkingFormat: "zai", thinkingEffortSupported: true, contextWindow: 200000, maxOutput: 128000 } },
-  { pattern: "*glm-5*",         caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 200000, maxOutput: 128000 } },
-  { pattern: "*glm-4.7*",       caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 200000, maxOutput: 128000 } },
+  { pattern: "*glm-5.3*",       caps: { reasoning: true, thinkingFormat: "zai", thinkingCanDisable: false, thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*glm-5.2*",       caps: { reasoning: true, thinkingFormat: "zai", thinkingEffortSupported: true, contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*glm-5*",         caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*glm-4.7*",       caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 1000000, maxOutput: 128000 } },
   { pattern: "*glm-4*",         caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 200000 } },
   { pattern: "*glm*",           caps: { reasoning: true, thinkingFormat: "zai", contextWindow: 200000 } },
 
@@ -494,6 +492,74 @@ function getCatalogSource() {
   return (catalogSource = globalThis.__9rCatalogSource || null);
 }
 
+/**
+ * Set a dynamic context window override at runtime (e.g. from settings, DB, or tests).
+ * target can be "provider" (e.g. "codex"), "model" (e.g. "gpt-6-luna"), or "provider/model".
+ */
+export function setContextWindowOverride(target, windowSize) {
+  if (typeof globalThis === "undefined") return;
+  globalThis.__9rContextOverrides ??= new Map();
+  if (windowSize == null) {
+    if (globalThis.__9rContextOverrides instanceof Map) {
+      globalThis.__9rContextOverrides.delete(target);
+    } else {
+      delete globalThis.__9rContextOverrides[target];
+    }
+  } else {
+    if (globalThis.__9rContextOverrides instanceof Map) {
+      globalThis.__9rContextOverrides.set(target, Number(windowSize));
+    } else {
+      globalThis.__9rContextOverrides[target] = Number(windowSize);
+    }
+  }
+}
+
+/**
+ * Resolves contextWindow dynamically:
+ * 1. Checks globalThis.__9rContextOverrides / globalThis.__9rCustomModelLimits
+ * 2. Checks process.env (MODEL_CONTEXT_OVERRIDES, CODEX_CONTEXT_WINDOW, GLM_CONTEXT_WINDOW)
+ * 3. Falls back to currentWindow
+ */
+export function getDynamicContextWindow(provider, model, currentWindow) {
+  const normModel = String(model || "").toLowerCase();
+  const baseModel = normModel.includes("/") ? normModel.slice(normModel.lastIndexOf("/") + 1) : normModel;
+  const provKey = String(provider || "").toLowerCase();
+
+  // 1. globalThis dynamic overrides
+  if (typeof globalThis !== "undefined") {
+    const overrides = globalThis.__9rContextOverrides || globalThis.__9rCustomModelLimits;
+    if (overrides) {
+      const val = typeof overrides.get === "function"
+        ? (overrides.get(`${provKey}/${baseModel}`) ?? overrides.get(baseModel) ?? overrides.get(provKey))
+        : (overrides[`${provKey}/${baseModel}`] ?? overrides[baseModel] ?? overrides[provKey]);
+      const num = Number(val);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+  }
+
+  // 2. process.env overrides
+  if (typeof process !== "undefined" && process?.env) {
+    if (process.env.MODEL_CONTEXT_OVERRIDES) {
+      try {
+        const map = JSON.parse(process.env.MODEL_CONTEXT_OVERRIDES);
+        const val = map[`${provKey}/${baseModel}`] ?? map[baseModel] ?? map[provKey];
+        const num = Number(val);
+        if (Number.isFinite(num) && num > 0) return num;
+      } catch { /* ignore JSON parse error */ }
+    }
+    if ((provKey === "codex" || provKey === "chatgpt") && process.env.CODEX_CONTEXT_WINDOW) {
+      const num = Number(process.env.CODEX_CONTEXT_WINDOW);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+    if ((provKey === "glm" || provKey === "zai" || provKey === "glm-cn") && process.env.GLM_CONTEXT_WINDOW) {
+      const num = Number(process.env.GLM_CONTEXT_WINDOW);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+  }
+
+  return currentWindow;
+}
+
 // Apply the synced catalog + name heuristic on top of a table-resolved result.
 // Strictly additive: a capability already true stays true, and a false one only
 // flips when an outside source positively declares support.
@@ -515,6 +581,9 @@ function refine(base, provider, model) {
       if (limits.maxOutput > 0) result.maxOutput = limits.maxOutput;
     }
   }
+
+  // Apply dynamic contextWindow override
+  result.contextWindow = getDynamicContextWindow(provider, model, result.contextWindow);
 
   if (!result.vision && looksLikeVisionModel(model)) result.vision = true;
 
@@ -584,13 +653,13 @@ export function getCapabilitiesForModel(provider, model) {
   // 1. Provider-specific override
   if (provider) {
     const providerCaps = PROVIDER_CAPABILITIES[provider];
-    if (providerCaps?.[model]) return { ...DEFAULT_CAPABILITIES, ...providerCaps[model] };
-    if (providerCaps?.[baseModel]) return { ...DEFAULT_CAPABILITIES, ...providerCaps[baseModel] };
+    if (providerCaps?.[model]) return refine(providerCaps[model], provider, model);
+    if (providerCaps?.[baseModel]) return refine(providerCaps[baseModel], provider, model);
   }
 
   // 2. Canonical exact
-  if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
-  if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
+  if (MODEL_CAPABILITIES[baseModel]) return refine(MODEL_CAPABILITIES[baseModel], provider, model);
+  if (MODEL_CAPABILITIES[model]) return refine(MODEL_CAPABILITIES[model], provider, model);
 
   // 3. Pattern match (first match wins), refined by catalog + name heuristic
   for (const { pattern, caps } of PATTERN_CAPABILITIES) {

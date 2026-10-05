@@ -345,12 +345,18 @@ export async function handleChat(request, clientRawRequest = null) {
       paidTrafficDistribution: isJevFree ? null : (paidTraffic?.request ? { ...paidTraffic, persistRequest: () => markPaidTrafficRequest({ provider: paidTraffic.provider, accounts: paidTraffic.accounts }, paidTraffic.request) } : paidTraffic),
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
-    // routedModel may carry a Jev-picked thinking suffix "model(level)" — strip it before
-    // resolving, since getModelInfo/capabilities lookups operate on the bare model id.
-    const routedInfo = await getModelInfo(stripThinkingSuffix(routedModel));
-    if (!routedInfo.provider && !(await getComboModels(stripThinkingSuffix(routedModel))) && availableModels.length > 0) {
+    const cleanRouted = routedModel ? stripThinkingSuffix(routedModel) : null;
+    const routedInfo = cleanRouted ? await getModelInfo(cleanRouted) : { provider: null };
+    if ((!routedInfo.provider && !(await getComboModels(cleanRouted))) && availableModels.length > 0) {
       log.warn("JEV", `[9Router-Jev] [WARN] Fallback '${routedModel}' nicht auflösbar -> Fallback: ${availableModels[0]}`);
       routedModel = availableModels[0];
+    }
+    if (!routedModel && availableModels.length > 0) {
+      routedModel = availableModels[0];
+    }
+    if (!routedModel) {
+      log.warn("JEV", `[9Router-Jev] [WARN] Kein passendes Modell für diesen Request verfügbar`);
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Kein Modell mit ausreichendem Kontextfenster oder verfügbarer Quote gefunden.");
     }
     body.model = routedModel;
     if (clientRawRequest?.body) clientRawRequest.body.model = routedModel;

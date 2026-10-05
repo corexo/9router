@@ -288,7 +288,9 @@ export async function selectJevModel(body, availableModels, options = {}) {
   );
   const apiKey = options.apiKey || process.env.TYPESAFE_API_KEY || "";
   const preferredFallback = options.defaultModel || process.env.JEV_ROUTER_DEFAULT_MODEL;
-  const fallback = models.includes(preferredFallback) ? preferredFallback : models[0];
+  const fallback = models.includes(preferredFallback)
+    ? preferredFallback
+    : (models[0] || (Array.isArray(availableModels) && availableModels.length > 0 ? availableModels[0] : null));
   const warn = options.warn || console.warn;
   // Trace-aware patch: with concurrent requests updateLastJevRequest could patch the wrong entry.
   const patchTrace = (patch) => (options.traceId ? patchJevTrace(options.traceId, patch) : updateLastJevRequest(patch));
@@ -298,7 +300,10 @@ export async function selectJevModel(body, availableModels, options = {}) {
     return fallback;
   };
 
-  if (models.length === 0) return fail("Keine verfügbaren Modelle");
+  if (models.length === 0) {
+    if (fallback) return fail("Keine passenden Modelle im gefilterten Jev-Pool, verwende verfügbaren Fallback");
+    return fail("Keine verfügbaren Modelle");
+  }
   if (!apiKey) return fail("Jev API Key fehlt");
 
   // Check decision cache before hitting API
