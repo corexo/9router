@@ -2,6 +2,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
 const DEFAULT_MAX_RECORDS = 200;
+const DEFAULT_RETENTION_DAYS = 7;
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 const DEFAULT_MAX_JSON_SIZE = 512 * 1024;
@@ -123,6 +124,9 @@ async function flushToDatabase() {
             [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
           );
         }
+
+        const cutoff = new Date(Date.now() - DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        db.run(`DELETE FROM requestDetails WHERE timestamp < ?`, [cutoff]);
 
         const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
         if (cnt && cnt.c > config.maxRecords) {
