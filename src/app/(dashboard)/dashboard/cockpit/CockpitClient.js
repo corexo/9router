@@ -47,6 +47,21 @@ function timeAgo(dateString) {
   return `vor ${days}d`;
 }
 
+function CollapsibleCockpitCard({ id, title, collapsed, onToggle, padding = "md", className = "", children }) {
+  return (
+    <details open={!collapsed} onToggle={(event) => onToggle(id, !event.currentTarget.open)} className="group relative">
+      <summary className="absolute right-3 top-3 z-10 flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted hover:bg-surface-2 hover:text-text-main focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden">
+        <span className="hidden group-open:inline">Einklappen</span>
+        <span className="group-open:hidden">{title}</span>
+        <span className="material-symbols-outlined text-[16px] group-open:rotate-180">expand_more</span>
+      </summary>
+      <Card padding={padding} className={className}>
+        {children}
+      </Card>
+    </details>
+  );
+}
+
 const PROVIDER_COLORS = {
   claude: "#D97706",
   glm: "#2563EB",
@@ -65,9 +80,14 @@ export default function CockpitClient() {
   const [piSessions, setPiSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = usePersistentState("9router_cockpit_auto_refresh", true);
+  const [collapsedCards, setCollapsedCards] = usePersistentState("9router_cockpit_collapsed_cards", {});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [accountFilter, setAccountFilter] = useState("all");
   const [togglingId, setTogglingId] = useState(null);
+
+  const toggleCollapsedCard = useCallback((id, collapsed) => {
+    setCollapsedCards((current) => ({ ...current, [id]: collapsed }));
+  }, [setCollapsedCards]);
 
   // Token Saver state
   const [saverSettings, setSaverSettings] = useState({
@@ -924,7 +944,7 @@ export default function CockpitClient() {
       </div>
 
       {/* TOKEN STREAMING & FLOW TIMELINE CHART */}
-      <Card padding="md" className="flex flex-col border-emerald-500/20 bg-gradient-to-b from-surface to-surface-2/30">
+      <CollapsibleCockpitCard id="token-flow" title="Token Flow" collapsed={!!collapsedCards["token-flow"]} onToggle={toggleCollapsedCard} className="flex flex-col border-emerald-500/20 bg-gradient-to-b from-surface to-surface-2/30">
         <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
             <div className="relative flex h-3 w-3">
@@ -993,10 +1013,10 @@ export default function CockpitClient() {
         <div className="relative h-[220px] w-full">
           <canvas ref={setLiveCanvasEl} />
         </div>
-      </Card>
+      </CollapsibleCockpitCard>
 
       {/* TOKEN SAVER & COMPRESSION ENGINES */}
-      <Card padding="md" className="border-border/80">
+      <CollapsibleCockpitCard id="token-saver" title="Token Saver" collapsed={!!collapsedCards["token-saver"]} onToggle={toggleCollapsedCard} className="border-border/80">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-3 border-b border-border">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -1209,12 +1229,12 @@ export default function CockpitClient() {
             )}
           </div>
         </div>
-      </Card>
+      </CollapsibleCockpitCard>
 
       {/* Grid: Jev Intelligent Routing & Cache Performance - Umbruch bei geringer Breite */}
       <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
         {/* Left: Jev Router Details */}
-        <Card padding="md" className="flex flex-col">
+        <CollapsibleCockpitCard id="jev-routing" title="Jev Routing" collapsed={!!collapsedCards["jev-routing"]} onToggle={toggleCollapsedCard} className="flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
@@ -1483,10 +1503,10 @@ export default function CockpitClient() {
               </div>
             )}
           </div>
-        </Card>
+        </CollapsibleCockpitCard>
 
         {/* Right: Cache Performance Chart & Provider Hit-Rates */}
-        <Card padding="md" className="flex flex-col">
+        <CollapsibleCockpitCard id="prompt-cache" title="Prompt Cache" collapsed={!!collapsedCards["prompt-cache"]} onToggle={toggleCollapsedCard} className="flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -1536,7 +1556,7 @@ export default function CockpitClient() {
                 ))}
             </div>
           </div>
-        </Card>
+        </CollapsibleCockpitCard>
       </div>
 
       {/* Pi project folders are informational only, never routing inputs. */}
@@ -1561,7 +1581,7 @@ export default function CockpitClient() {
       <ActiveSessionsVisualizer initialSessions={data?.sessions} />
 
       {/* Account Steuerung & Kompakte Usage (The Core Interactive Section) */}
-      <Card padding="none" className="overflow-hidden">
+      <CollapsibleCockpitCard id="account-control" title="Account-Steuerung" collapsed={!!collapsedCards["account-control"]} onToggle={toggleCollapsedCard} padding="none" className="overflow-hidden">
         <div className="p-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -1745,10 +1765,10 @@ export default function CockpitClient() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </CollapsibleCockpitCard>
 
       {/* Live Routed Traffic Inspector */}
-      <Card padding="none" className="overflow-hidden">
+      <CollapsibleCockpitCard id="live-routing" title="Live Routing" collapsed={!!collapsedCards["live-routing"]} onToggle={toggleCollapsedCard} padding="none" className="overflow-hidden">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-text-main">Live Routing Traffic</h2>
@@ -1816,7 +1836,7 @@ export default function CockpitClient() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </CollapsibleCockpitCard>
     </div>
   );
 }
