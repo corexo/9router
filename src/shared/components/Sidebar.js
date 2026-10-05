@@ -17,8 +17,11 @@ const navSections = [
     title: "Operations & Flow",
     items: [
       { href: "/dashboard/cockpit", label: "Cockpit", icon: "space_dashboard", badge: "LIVE" },
+  { href: "/dashboard/paid-traffic", label: "Paid Traffic", icon: "balance" },
+  { href: "/dashboard/traffic-balancer", label: "Legacy Traffic Balancer", icon: "balance" },
       { href: "/dashboard/flow", label: "Request Flow", icon: "route" },
       { href: "/dashboard/usage", label: "Usage & Analytics", icon: "monitoring" },
+      { href: "/dashboard/account-quotas", label: "Account-Quotas", icon: "data_usage" },
       { href: "/dashboard/cache", label: "Cache Effizienz", icon: "bolt" },
       { href: "/dashboard/cache-sessions", label: "Cache Sessions", icon: "cached" },
       { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
@@ -28,6 +31,7 @@ const navSections = [
   {
     title: "Jev Inspector",
     items: [
+      { href: "/dashboard/jev-pool", label: "Modell-Pool", icon: "tune" },
       { href: "/dashboard/jev-inspector", label: "Alle Stufen", icon: "manage_search" },
       { href: "/dashboard/jev-inspector?stage=incoming", label: "\u2460 Pi-Request", icon: "login", stage: "incoming" },
       { href: "/dashboard/jev-inspector?stage=fullPayload", label: "\u2461 Jev-Request", icon: "outbound", stage: "fullPayload" },

@@ -37,6 +37,14 @@ export function copyStandaloneAssets({ projectRoot = process.cwd(), distDir = pr
     cpSync(serverWrapperSource, serverWrapperDestination, { force: true });
     console.log(`[standalone-assets] Copied custom-server.js to ${serverWrapperDestination}`);
   }
+
+  // Ensure background services required by custom-server.js exist in standalone
+  const sseServicesSource = resolve(projectRoot, "src", "sse", "services");
+  const sseServicesDestination = resolve(standaloneDir, "src", "sse", "services");
+  if (existsSync(sseServicesSource)) {
+    cpSync(sseServicesSource, sseServicesDestination, { recursive: true, force: true });
+    console.log(`[standalone-assets] Copied sse services to ${sseServicesDestination}`);
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(dirname(fileURLToPath(import.meta.url)), "copy-standalone-assets.mjs")) {

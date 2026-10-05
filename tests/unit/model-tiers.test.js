@@ -28,6 +28,12 @@ describe("model tier preference", () => {
     expect(getModelTier("unknown-model")).toBeNull();
   });
 
+  it("applies a user-defined low tier to an exact model id", () => {
+    expect(getModelTier("custom/unknown-model", { "custom/unknown-model": "low" })).toBe("low");
+    expect(getModelTier("other/unknown-model", { "custom/unknown-model": "low" })).toBeNull();
+    expect(getModelTier("cc/claude-opus-5", { "cc/claude-opus-5": "low" })).toBe("low");
+  });
+
   it("normalizes preference ids and falls back to balanced", () => {
     expect(normalizeTierPreference(" MAX ")).toBe("max");
     expect(normalizeTierPreference("nope")).toBeNull();
@@ -36,27 +42,18 @@ describe("model tier preference", () => {
     expect(TIER_PREFERENCES.map((p) => p.id)).toEqual(["fast", "eco", "balanced", "quality", "max"]);
   });
 
-  it("leaves the pool untouched in balanced mode", () => {
-    const result = filterModelsByTierPreference(POOL, "balanced");
-    expect(result.applied).toBe(false);
-    expect(result.models).toEqual(POOL);
+  it("keeps every candidate in the pool for every preference", () => {
+    for (const preference of TIER_PREFERENCES) {
+      const result = filterModelsByTierPreference(POOL, preference.id);
+      expect(result.models).toEqual(POOL);
+      expect(result.dropped).toBe(0);
+      expect(result.applied).toBe(false);
+    }
   });
 
-  it("keeps only frontier models in max mode", () => {
-    const result = filterModelsByTierPreference(POOL, "max");
-    expect(result.applied).toBe(true);
-    expect(result.models).toEqual(["cc/claude-opus-5"]);
-    expect(result.dropped).toBe(5);
-  });
-
-  it("keeps strong and frontier in quality mode, drops unknown tiers", () => {
-    const result = filterModelsByTierPreference(POOL, "quality");
-    expect(result.models).toEqual(["cc/claude-opus-5", "cc/claude-fable-5-1", "glm/glm-5.1"]);
-  });
-
-  it("keeps fast and mid in eco mode", () => {
-    const result = filterModelsByTierPreference(POOL, "eco");
-    expect(result.models).toEqual(["cc/claude-haiku-4-5", "glm/glm-4.7-flash"]);
+  it("exposes tier preferences as hints instead of exclusions", () => {
+    expect(filterModelsByTierPreference(POOL, "max").preference.hint).toContain("strongly prefer FRONTIER");
+    expect(filterModelsByTierPreference(POOL, "eco").preference.hint).toContain("all model tiers remain available");
   });
 
   it("never empties the pool", () => {

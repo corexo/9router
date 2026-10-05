@@ -35,5 +35,9 @@ export function makeKv(scope) {
       const db = await getAdapter();
       db.run(`DELETE FROM kv WHERE scope = ?`, [scope]);
     },
+    async removePrefix(prefix) {
+      const db = await getAdapter();
+      db.run(`DELETE FROM kv WHERE scope = ? AND key LIKE ?`, [scope, `${prefix}%`]);
+    },
   };
 }

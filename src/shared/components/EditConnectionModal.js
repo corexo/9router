@@ -15,6 +15,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     priority: 1,
     apiKey: "",
   });
+  const [throttlePercent, setThrottlePercent] = useState(0);
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
     apiVersion: "2024-10-01-preview",
@@ -36,6 +37,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         priority: connection.priority || 1,
         apiKey: "",
       });
+      setThrottlePercent(connection.throttlePercent ?? 0);
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
         setAzureData({
@@ -120,6 +122,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       const updates = {
         name: formData.name,
         priority: formData.priority,
+        throttlePercent,
       };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
@@ -201,6 +204,71 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
+
+        {/* Drosselung / Traffic-Gewichtung */}
+        <div className="bg-surface-2/70 p-3.5 rounded-xl border border-border/70 flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-text uppercase tracking-wider flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-amber-500">tune</span>
+              <span>Drosselung / Gewichtung</span>
+            </label>
+            <span
+              className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                throttlePercent === 0
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                  : throttlePercent === 100
+                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+              }`}
+            >
+              {throttlePercent === 0
+                ? "0% (Normal — 100% Traffic)"
+                : throttlePercent === 100
+                ? "100% (Standby / Fallback)"
+                : `${throttlePercent}% gedrosselt (${100 - throttlePercent}% Traffic)`}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={throttlePercent}
+              onChange={(e) => setThrottlePercent(Number(e.target.value))}
+              className="w-full accent-amber-500 cursor-pointer h-2 bg-surface-3 rounded-lg"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-1 text-[11px]">
+            {[
+              { label: "0% Normal", val: 0 },
+              { label: "25%", val: 25 },
+              { label: "50%", val: 50 },
+              { label: "75%", val: 75 },
+              { label: "90%", val: 90 },
+              { label: "Standby", val: 100 },
+            ].map((preset) => (
+              <button
+                key={preset.val}
+                type="button"
+                onClick={() => setThrottlePercent(preset.val)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                  throttlePercent === preset.val
+                    ? "bg-amber-500 text-black font-bold shadow-sm"
+                    : "bg-surface-3 text-text-muted hover:text-text hover:bg-surface-4"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-[11px] text-text-muted leading-relaxed">
+            💡 Bestimmt, wie selten dieser Account für <strong>neue Chats</strong> gewählt wird. Laufende Sessions bleiben <strong>session-sticky</strong> daran gebunden (<strong>100% Prompt-Cache-Erhalt</strong>). Bei 100% dient er als Notfall-Standby.
+          </p>
+        </div>
 
         {!isOAuth && (
           <>

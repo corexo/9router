@@ -2,6 +2,8 @@ import { getMeta, setMeta } from "@/lib/db/helpers/metaStore.js";
 
 const META_KEY = "modelHealthRegistry";
 const TEMPORARY_COOLDOWN_MS = 30 * 60 * 1000;
+const DAILY_FAILURE_THRESHOLD = 3;
+const DAILY_DISABLE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Classify an upstream failure into a health-policy decision.
@@ -13,11 +15,16 @@ const TEMPORARY_COOLDOWN_MS = 30 * 60 * 1000;
 export function classifyModelFailure(status, message = "") {
   const text = String(message).toLowerCase();
   
-  // 404 Not Found (e.g. Ollama model missing) → permanent disable
-  if (status === 404 || text.includes("model not found") || text.includes("model not exist")) {
+  // Missing or retired models cannot recover without a catalog/configuration change.
+  if (status === 404 || status === 410 || text.includes("model not found") || text.includes("model not exist") || text.includes("model has been deprecated") || text.includes("was deprecated")) {
     return { type: "unsupported", scope: "permanent" };
   }
   
+  // Account-specific Codex rejection must not disable the model for other accounts.
+  if (text.includes("not supported when using codex with a chatgpt account")) {
+    return { type: "unsupported", scope: "request" };
+  }
+
   // Model explicitly not supported by provider/account
   if (text.includes("model_not_supported") || text.includes("model not supported") || text.includes("does not exist")) {
     return { type: "unsupported", scope: "permanent" };
@@ -33,15 +40,24 @@ export function classifyModelFailure(status, message = "") {
     return { type: "incompatible", scope: "cooldown" };
   }
   
-  // Context overflow: 413 / context window exceeded → 30min cooldown so Jev/combos don't keep looping on a model whose context is exceeded
+  // Hard upstream prompt cap (e.g. copilot gpt-4o-mini enforces 12288): the model
+  // can never serve this session size, and Jev keeps re-picking it (cheapest).
+  // Block it in the pool (capability → state "incompatible") until manually reset.
+  if (text.includes("model_max_prompt_tokens_exceeded") || /prompt token count of \d+ exceeds the limit of \d+/.test(text)) {
+    return { type: "context_limit", scope: "capability" };
+  }
+
+  // Context overflow belongs to this request, not the model or other sessions.
   if (
     status === 413 ||
     text.includes("context window limit") ||
+    text.includes("exceeds the context window") ||
+    text.includes("exceeded this model context") ||
     text.includes("context length") ||
     text.includes("too many tokens") ||
     (text.includes("token") && (text.includes("exceed") || text.includes("exceeds")))
   ) {
-    return { type: "context_limit", scope: "cooldown" };
+    return { type: "context_limit", scope: "request" };
   }
   
   // Schema incompatibility
@@ -49,9 +65,9 @@ export function classifyModelFailure(status, message = "") {
     return { type: "incompatible", scope: "capability" };
   }
   
-  // 5xx server errors, timeouts
+  // Repeated upstream/service failures can indicate a broken model route.
   if (status >= 500 || status === 408 || text.includes("timeout") || text.includes("timed out")) {
-    return { type: "temporary", scope: "cooldown" };
+    return { type: "temporary", scope: "counted" };
   }
   
   return { type: "unknown", scope: "request" };
@@ -71,19 +87,27 @@ async function writeRegistry(registry) {
 
 function entryFor(classification, previous, { provider, model, connectionId, message }) {
   const now = Date.now();
-  const state = classification.scope === "permanent" ? "disabled"
+  const sameDay = previous.failureDay === new Date(now).toISOString().slice(0, 10);
+  const failuresToday = classification.scope === "counted" ? (sameDay ? previous.failuresToday || 0 : 0) + 1 : (previous.failures || 0) + 1;
+  const disabledForDay = classification.scope === "counted" && failuresToday >= DAILY_FAILURE_THRESHOLD;
+  const state = classification.scope === "permanent" || disabledForDay ? "disabled"
     : classification.scope === "capability" ? "incompatible"
+    : classification.scope === "counted" ? "cooldown"
     : "cooldown";
   return {
     provider,
     model,
     connectionId: connectionId || previous.connectionId,
     state,
-    reason: classification.type,
+    reason: disabledForDay ? "repeated_upstream_errors" : classification.type,
     message: String(message || "").slice(0, 500),
     failures: (previous.failures || 0) + 1,
+    failuresToday,
+    failureDay: new Date(now).toISOString().slice(0, 10),
     updatedAt: new Date(now).toISOString(),
-    expiresAt: classification.scope === "cooldown" ? new Date(now + TEMPORARY_COOLDOWN_MS).toISOString() : null,
+    expiresAt: disabledForDay ? new Date(now + DAILY_DISABLE_MS).toISOString()
+      : classification.scope === "cooldown" || classification.scope === "counted" ? new Date(now + TEMPORARY_COOLDOWN_MS).toISOString()
+      : null,
   };
 }
 
@@ -95,9 +119,14 @@ export async function recordModelFailure({ provider, model, connectionId, status
 
     const registry = await readRegistry();
     const key = `${provider}/${model}`;
-    registry[key] = entryFor(classification, registry[key] || {}, { provider, model, connectionId, message });
+    const previous = registry[key] || {};
+    const next = entryFor(classification, previous, { provider, model, connectionId, message });
+    if (classification.scope === "counted" && next.failuresToday < DAILY_FAILURE_THRESHOLD && previous.expiresAt && new Date(previous.expiresAt).getTime() > Date.now()) {
+      next.expiresAt = previous.expiresAt;
+    }
+    registry[key] = next;
     await writeRegistry(registry);
-    return classification;
+    return { ...classification, disabledForDay: next.state === "disabled", failuresToday: next.failuresToday };
   } catch {
     return { type: "tracking_error", scope: "request" };
   }
@@ -123,7 +152,12 @@ export async function getUnavailableModelIds() {
   const ids = new Set();
   let changed = false;
   for (const [key, item] of Object.entries(registry)) {
-    if (item.state === "cooldown" && item.expiresAt && new Date(item.expiresAt).getTime() <= now) {
+    if (item.failureDay && item.failureDay !== new Date(now).toISOString().slice(0, 10) && item.reason === "repeated_upstream_errors") {
+      delete registry[key];
+      changed = true;
+      continue;
+    }
+    if ((item.state === "cooldown" || item.state === "disabled") && item.expiresAt && new Date(item.expiresAt).getTime() <= now) {
       delete registry[key];
       changed = true;
       continue;

@@ -66,6 +66,32 @@ export default function CacheSessionsClient() {
     return () => clearInterval(interval);
   }, [autoRefreshInterval, fetchData]);
 
+  const [filterMode, setFilterMode] = usePersistentState("9router_cache_sessions_filter_tab", "all"); // "all" | "top" | "active"
+  const [keepAliveConfig, setKeepAliveConfig] = useState({ enabled: true, intervalSecs: 240, maxSessions: 20, maxIdleMins: 45 });
+  const [savingKeepAliveConfig, setSavingKeepAliveConfig] = useState(false);
+  const [triggeringProbe, setTriggeringProbe] = useState(false);
+
+  const fetchKeepAliveConfig = useCallback(async () => {
+    const res = await fetch("/api/cache/keep-alive");
+    if (res.ok) setKeepAliveConfig((await res.json()).config);
+  }, []);
+
+  useEffect(() => { fetchKeepAliveConfig(); }, [fetchKeepAliveConfig]);
+
+  async function saveKeepAliveConfig() {
+    try {
+      setSavingKeepAliveConfig(true);
+      const res = await fetch("/api/cache/keep-alive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "updateConfig", config: keepAliveConfig }),
+      });
+      if (res.ok) setKeepAliveConfig((await res.json()).config);
+    } finally {
+      setSavingKeepAliveConfig(false);
+    }
+  }
+
   async function copyId(id) {
     try {
       await navigator.clipboard.writeText(id);
@@ -76,19 +102,76 @@ export default function CacheSessionsClient() {
     }
   }
 
+  async function toggleKeepAlive(cacheId, currentVal) {
+    try {
+      const nextVal = !currentVal;
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          sessions: (prev.sessions || []).map((s) =>
+            s.cacheId === cacheId ? { ...s, keepAliveEnabled: nextVal } : s
+          ),
+        };
+      });
+
+      await fetch("/api/cache/keep-alive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggleSession", cacheId, enabled: nextVal }),
+      });
+      fetchData(true);
+    } catch (err) {
+      console.error("[CacheSessions] Failed to toggle keep-alive:", err);
+    }
+  }
+
+  async function triggerProbeNow() {
+    try {
+      setTriggeringProbe(true);
+      await fetch("/api/cache/keep-alive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "triggerNow" }),
+      });
+      setTimeout(() => {
+        fetchData(true);
+        setTriggeringProbe(false);
+      }, 1200);
+    } catch {
+      setTriggeringProbe(false);
+    }
+  }
+
   const sessions = useMemo(() => data?.sessions || [], [data]);
+
+  const topSessions = useMemo(() => {
+    return [...sessions]
+      .sort((a, b) => {
+        if (b.requests !== a.requests) return b.requests - a.requests;
+        return (Number(b.cachedTokens) || 0) - (Number(a.cachedTokens) || 0);
+      })
+      .slice(0, 5);
+  }, [sessions]);
 
   // Filtered sessions
   const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return sessions;
+    let base = sessions;
+    if (filterMode === "active") {
+      base = sessions.filter((s) => s.state === "active");
+    } else if (filterMode === "top") {
+      base = topSessions;
+    }
+
+    if (!searchQuery.trim()) return base;
     const q = searchQuery.toLowerCase();
-    return sessions.filter((s) => {
+    return base.filter((s) => {
       if (s.cacheId?.toLowerCase().includes(q)) return true;
       if (s.provider?.toLowerCase().includes(q)) return true;
       if (s.models?.some((m) => m?.toLowerCase().includes(q))) return true;
       return false;
     });
-  }, [sessions, searchQuery]);
+  }, [sessions, topSessions, filterMode, searchQuery]);
 
   // Aggregated KPI Stats
   const stats = useMemo(() => {
@@ -235,22 +318,99 @@ export default function CacheSessionsClient() {
         </Card>
       </div>
 
-      {/* Filter Bar */}
-      <div className="flex items-center gap-3">
-        <div className="w-full sm:w-72">
-          <Input
-            icon="search"
-            placeholder="Modell, Provider oder ID filtern..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        {searchQuery && (
-          <Button variant="ghost" size="sm" onClick={() => setSearchQuery("")}>
-            Zurücksetzen
+      {/* Filter Bar & Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Tabs: Alle vs Top 5 vs Aktiv */}
+          <div className="inline-flex p-0.5 rounded-lg bg-surface-2 border border-border font-medium text-xs">
+            <button
+              onClick={() => setFilterMode("all")}
+              className={`px-3 py-1.5 rounded-md transition-colors ${
+                filterMode === "all"
+                  ? "bg-brand-500 text-white shadow-sm font-semibold"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+            >
+              Alle ({sessions.length})
+            </button>
+            <button
+              onClick={() => setFilterMode("top")}
+              className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+                filterMode === "top"
+                  ? "bg-amber-500 text-white shadow-sm font-semibold"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">local_fire_department</span>
+              <span>Top 5 Sessions</span>
+            </button>
+            <button
+              onClick={() => setFilterMode("active")}
+              className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+                filterMode === "active"
+                  ? "bg-emerald-500 text-white shadow-sm font-semibold"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
+              <span>Nur Aktive ({stats.activeCount})</span>
+            </button>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={triggerProbeNow}
+            disabled={triggeringProbe}
+            className="text-xs flex items-center gap-1 text-amber-500 hover:text-amber-600 border-amber-500/30 hover:bg-amber-500/10"
+            title="Sofortige Ausführung des Cache Keep-Alive Pings für alle berechtigten Sessions"
+          >
+            <span className={`material-symbols-outlined text-[15px] ${triggeringProbe ? "animate-spin" : ""}`}>
+              bolt
+            </span>
+            <span>{triggeringProbe ? "Pinge..." : "Keep-Alive Ping jetzt ausführen"}</span>
           </Button>
-        )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="w-full sm:w-64">
+            <Input
+              icon="search"
+              placeholder="Modell, Provider oder ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              size="sm"
+            />
+          </div>
+          {searchQuery && (
+            <Button variant="ghost" size="sm" onClick={() => setSearchQuery("")}>
+              Zurücksetzen
+            </Button>
+          )}
+        </div>
       </div>
+
+      <Card className="p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex items-center gap-2 text-sm text-text-main">
+            <input
+              type="checkbox"
+              checked={keepAliveConfig.enabled}
+              onChange={(e) => setKeepAliveConfig((c) => ({ ...c, enabled: e.target.checked }))}
+            />
+            Keep-Alive aktiv
+          </label>
+          <Input label="Ping alle (Sek.)" type="number" min="60" value={keepAliveConfig.intervalSecs}
+            onChange={(e) => setKeepAliveConfig((c) => ({ ...c, intervalSecs: Number(e.target.value) }))} />
+          <Input label="Max. Sessions" type="number" min="1" value={keepAliveConfig.maxSessions}
+            onChange={(e) => setKeepAliveConfig((c) => ({ ...c, maxSessions: Number(e.target.value) }))} />
+          <Input label="Inaktiv behalten (Min.)" type="number" min="5" value={keepAliveConfig.maxIdleMins}
+            onChange={(e) => setKeepAliveConfig((c) => ({ ...c, maxIdleMins: Number(e.target.value) }))} />
+          <Button size="sm" onClick={saveKeepAliveConfig} disabled={savingKeepAliveConfig}>
+            {savingKeepAliveConfig ? "Speichert…" : "Speichern"}
+          </Button>
+        </div>
+      </Card>
 
       {/* Main Sessions Table */}
       <Card padding="none" className="overflow-hidden">
@@ -259,13 +419,14 @@ export default function CacheSessionsClient() {
             <thead>
               <tr className="border-b border-border bg-surface-2/50 text-xs font-semibold text-text-muted uppercase tracking-wider">
                 <th className="p-4">Cache-ID</th>
-                <th className="p-4">Status</th>
+                <th className="p-4">Status &amp; TTL</th>
                 <th className="p-4">Provider</th>
                 <th className="p-4">Modell(e)</th>
                 <th className="p-4 text-right">Prompt-Tokens</th>
                 <th className="p-4 text-right text-emerald-600 dark:text-emerald-400">Gecacht</th>
                 <th className="p-4 text-right">Hit-Rate</th>
                 <th className="p-4 text-right">Requests</th>
+                <th className="p-4 text-center">Keep-Alive</th>
                 <th className="p-4 text-right">Letzte Aktivität</th>
                 <th className="p-4 text-right">Aktion</th>
               </tr>
@@ -300,21 +461,31 @@ export default function CacheSessionsClient() {
                         </div>
                       </td>
                       <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={session.state === "active" ? "success" : "default"}
-                            size="sm"
-                            className="flex items-center gap-1"
-                          >
-                            {session.state === "active" && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            )}
-                            {session.state === "active" ? "Aktiv" : "Idle"}
-                          </Badge>
-                          {session.cacheActive && (
-                            <Badge variant="outline" size="sm" className="font-mono text-emerald-600 border-emerald-500/30">
-                              CACHE
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={session.state === "active" ? "success" : "default"}
+                              size="sm"
+                              className="flex items-center gap-1"
+                            >
+                              {session.state === "active" && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              )}
+                              {session.state === "active" ? "Aktiv" : "Idle"}
                             </Badge>
+                            {session.cacheActive && (
+                              <Badge variant="outline" size="sm" className="font-mono text-emerald-600 border-emerald-500/30">
+                                CACHE
+                              </Badge>
+                            )}
+                          </div>
+                          {session.ttlRemainingSecs != null && session.ttlRemainingSecs > 0 ? (
+                            <div className="flex items-center gap-1 font-mono text-[10px] text-text-muted">
+                              <span className="material-symbols-outlined text-[12px] text-amber-500">timer</span>
+                              <span>TTL: {Math.floor(session.ttlRemainingSecs / 60)}:{(session.ttlRemainingSecs % 60).toString().padStart(2, "0")}</span>
+                            </div>
+                          ) : (
+                            <div className="font-mono text-[10px] text-text-muted/60">TTL abgelaufen</div>
                           )}
                         </div>
                       </td>
@@ -358,6 +529,22 @@ export default function CacheSessionsClient() {
                       <td className="p-4 text-right font-mono text-text-muted">
                         {session.requests}
                       </td>
+                      <td className="p-4 text-center">
+                        <button
+                          onClick={() => toggleKeepAlive(session.cacheId, session.keepAliveEnabled)}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition-all border ${
+                            session.keepAliveEnabled
+                              ? "bg-amber-500/15 text-amber-500 border-amber-500/40 font-semibold shadow-sm"
+                              : "bg-surface-3 text-text-muted border-border hover:text-text-main"
+                          }`}
+                          title={session.keepAliveEnabled ? "Keep-Alive aktiv (Klicken zum Deaktivieren)" : "Keep-Alive aus (Klicken zum Aktivieren)"}
+                        >
+                          <span className={`material-symbols-outlined text-[13px] ${session.keepAliveEnabled ? "animate-pulse" : ""}`}>
+                            {session.keepAliveEnabled ? "bolt" : "power_settings_new"}
+                          </span>
+                          <span>{session.keepAliveEnabled ? "ON" : "OFF"}</span>
+                        </button>
+                      </td>
                       <td className="p-4 text-right text-text-muted whitespace-nowrap">
                         {timeAgo(session.lastActive)}
                       </td>
@@ -375,7 +562,7 @@ export default function CacheSessionsClient() {
                 })
               ) : (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-text-muted text-sm">
+                  <td colSpan="11" className="p-8 text-center text-text-muted text-sm">
                     {searchQuery
                       ? "Keine Sessions passend zum Suchfilter gefunden."
                       : "Keine aktiven Sessions registriert — starte eine Konversation in Omni."}

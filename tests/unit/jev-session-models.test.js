@@ -19,3 +19,41 @@ describe("Jev session model stickiness", () => {
     expect(getSessionModel(sessionKey(nextTurn))).toBe("cc/claude-sonnet-5");
   });
 });
+
+describe("sessionKey resilience across client restarts", () => {
+  it("ignores a rewritten system prompt (Omni /restart scenario)", () => {
+    const before = { messages: [
+      { role: "system", content: "You are a coding agent. Today: 2026-10-02. Git: 86 dirty files." },
+      { role: "user", content: "Fix auth" },
+    ] };
+    const afterRestart = { messages: [
+      { role: "system", content: "You are a coding agent. Today: 2026-10-03. Git: clean." },
+      { role: "user", content: "Fix auth" },
+    ] };
+    expect(sessionKey(afterRestart)).toBe(sessionKey(before));
+  });
+
+  it("prefers an explicit client session id over content hashing", () => {
+    const a = { prompt_cache_key: "conv-42", messages: [
+      { role: "system", content: "prompt A" },
+      { role: "user", content: "hello" },
+    ] };
+    const b = { metadata: { session_id: "conv-42" }, messages: [
+      { role: "system", content: "totally different" },
+      { role: "user", content: "hello" },
+    ] };
+    expect(sessionKey(b)).toBe(sessionKey(a));
+  });
+
+  it("still distinguishes conversations with different first user turns", () => {
+    const a = { messages: [
+      { role: "system", content: "same system" },
+      { role: "user", content: "Fix auth" },
+    ] };
+    const b = { messages: [
+      { role: "system", content: "same system" },
+      { role: "user", content: "Fix payments" },
+    ] };
+    expect(sessionKey(b)).not.toBe(sessionKey(a));
+  });
+});

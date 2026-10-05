@@ -118,6 +118,11 @@ async function runHeavyStartup() {
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
+
+  // Prompt Cache Keep-Alive daemon (proactive 4m pings for top/active sessions)
+  import("@/sse/services/cacheKeepAlive.js")
+    .then(({ startCacheKeepAlive }) => startCacheKeepAlive())
+    .catch((e) => console.log("[CacheKeepAlive] scheduler start failed:", e.message));
 }
 
 function hasQuotaAutoPingEnabled(settings) {

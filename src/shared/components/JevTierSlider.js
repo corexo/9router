@@ -6,11 +6,11 @@ import { TIER_PREFERENCES, DEFAULT_TIER_PREFERENCE } from "@/sse/services/modelT
 // Display metadata for the "Modell-Klasse" slider. Order matches TIER_PREFERENCES
 // (index = slider position); the ids are the persisted `jevTierPreference` values.
 const STEP_META = {
-  fast: { icon: "bolt", hint: "Nur FAST-Tier (Mini/Flash). Maximal günstig, für triviale Edits und Lookups." },
-  eco: { icon: "eco", hint: "FAST + MID (z. B. Haiku, GLM 4.x, Qwen). Günstig für Routine-Coding." },
+  fast: { icon: "bolt", hint: "Starke Präferenz für FAST-Modelle; stärkere Modelle bleiben verfügbar, falls nötig." },
+  eco: { icon: "eco", hint: "Bevorzugt FAST + MID für Routine-Aufgaben; stärkere Modelle bleiben verfügbar." },
   balanced: { icon: "balance", hint: "Alle Tiers verfügbar — Jev entscheidet frei nach Schwierigkeit der Anfrage." },
-  quality: { icon: "workspace_premium", hint: "STRONG + FRONTIER (z. B. Fable, Sonnet, GLM 5). Kleine Modelle werden nicht angeboten." },
-  max: { icon: "diamond", hint: "Nur FRONTIER (z. B. Opus, GPT-6). Kosten spielen keine Rolle." },
+  quality: { icon: "workspace_premium", hint: "Bevorzugt STRONG + FRONTIER für komplexe Aufgaben; alle Pool-Modelle bleiben verfügbar." },
+  max: { icon: "diamond", hint: "Starke FRONTIER-Präferenz; alle Pool-Modelle bleiben verfügbar, Kosten werden nachrangig behandelt." },
 };
 
 export const TIER_SLIDER_STEPS = TIER_PREFERENCES.map((preference, index) => ({

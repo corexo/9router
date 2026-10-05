@@ -6,6 +6,7 @@ import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton, JevTierSli
 import { usePersistentState } from "@/shared/hooks";
 import { getModelTier } from "@/sse/services/modelTiers.js";
 import CompactQuotaTracker from "./CompactQuotaTracker";
+import ActiveSessionsVisualizer from "./ActiveSessionsVisualizer";
 
 const PERIODS = [
   { value: "today", label: "Heute" },
@@ -83,7 +84,7 @@ export default function CockpitClient() {
     loading: true,
   });
   const [updatingSaver, setUpdatingSaver] = useState(null);
-  // "Modell-Klasse" slider: which tiers Jev may route to (fast … max)
+  // "Modell-Klasse" slider: soft tier bias for Jev; never removes candidates
   const [jevTierPreference, setJevTierPreference] = useState("balanced");
   const [savingTier, setSavingTier] = useState(false);
   // Lokale Modelle ('local-first') ausschließen
@@ -93,6 +94,7 @@ export default function CockpitClient() {
   const [jevModels, setJevModels] = useState([]);
   const [jevModelsLoading, setJevModelsLoading] = useState(false);
   const [jevViewMode, setJevViewMode] = useState("table"); // "table" | "bars"
+  const [showAllJevModels, setShowAllJevModels] = useState(false);
 
   const loadSaverSettings = useCallback(async () => {
     try {
@@ -896,9 +898,21 @@ export default function CockpitClient() {
           <div className="mt-1 text-xs text-text-muted truncate">
             {fmtTokens(kpis.totalPromptTokens)} In • {fmtTokens(data.cache?.summary?.totalCompletionTokens || 0)} Out
           </div>
-          <div className="mt-3 text-xs text-text-muted flex items-center gap-1 font-mono">
-            <span className="material-symbols-outlined text-[14px] text-emerald-500">check_circle</span>
-            <span>Alle Router-Pfade stabil</span>
+          <div className="mt-3 text-xs text-text-muted flex items-center justify-between font-mono">
+            <div className="flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] text-emerald-500">check_circle</span>
+              <span>Pfade stabil</span>
+            </div>
+            {data?.sessions?.activeCount > 0 ? (
+              <span className="text-emerald-500 font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {data.sessions.activeCount} aktiv
+              </span>
+            ) : (
+              <span className="text-text-muted">
+                {data?.sessions?.totalCount || 0} Sessions
+              </span>
+            )}
           </div>
         </Card>
       </div>
@@ -1211,7 +1225,7 @@ export default function CockpitClient() {
           </div>
 
           <div className="flex-1 flex flex-col gap-4">
-            {/* Modell-Klasse slider: restricts which tiers Jev may pick */}
+            {/* Modell-Klasse slider: biases Jev's choice without filtering candidates */}
             <div className="p-3 rounded-xl bg-surface-2/40 border border-border/60">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs font-semibold uppercase text-text-muted tracking-wider">
@@ -1300,7 +1314,7 @@ export default function CockpitClient() {
 
               {jevViewMode === "table" ? (
                 (() => {
-                  const choicesMap = jev.choices || {};
+                  const choicesMap = { ...(jev.choices || {}) };
                   for (const c of jev.topChoices || []) {
                     if (choicesMap[c.model] == null) choicesMap[c.model] = c.count;
                   }
@@ -1334,8 +1348,14 @@ export default function CockpitClient() {
                     fast: { bg: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30", label: "FAST" },
                   };
 
+                  const visibleRows = showAllJevModels ? rows : rows.slice(0, 10);
                   return (
-                    <div className="overflow-x-auto rounded-xl border border-border/60 bg-surface/60 max-h-[340px] overflow-y-auto">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[11px] text-text-muted">
+                        <span>Top {visibleRows.length} von {rows.length} Modellen · nach Entscheidungen sortiert</span>
+                        {rows.length > 10 && <button type="button" onClick={() => setShowAllJevModels((value) => !value)} className="rounded border border-border/60 px-2 py-1 hover:bg-surface-2">{showAllJevModels ? "Weniger anzeigen" : `Alle ${rows.length} anzeigen`}</button>}
+                      </div>
+                      <div className={`overflow-x-auto rounded-xl border border-border/60 bg-surface/60 ${showAllJevModels ? "max-h-[340px] overflow-y-auto" : ""}`}>
                       <table className="w-full text-left border-collapse text-xs">
                         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur-sm border-b border-border text-[11px] font-semibold text-text-muted uppercase tracking-wider">
                           <tr>
@@ -1346,7 +1366,7 @@ export default function CockpitClient() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border/50">
-                          {rows.map((row) => {
+                          {visibleRows.map((row) => {
                             const badge = tierBadges[row.tier] || {
                               bg: "bg-surface-2 text-text-muted border-border/50",
                               label: row.tier.toUpperCase(),
@@ -1397,6 +1417,7 @@ export default function CockpitClient() {
                           })}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   );
                 })()
@@ -1514,6 +1535,9 @@ export default function CockpitClient() {
 
       {/* COMPACT REDESIGNED QUOTA TRACKER */}
       <CompactQuotaTracker />
+
+      {/* ACTIVE SESSIONS & LIVE PINGS VISUALIZER */}
+      <ActiveSessionsVisualizer initialSessions={data?.sessions} />
 
       {/* Account Steuerung & Kompakte Usage (The Core Interactive Section) */}
       <Card padding="none" className="overflow-hidden">

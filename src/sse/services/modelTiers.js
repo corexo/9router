@@ -12,6 +12,7 @@
  */
 
 export const TIER_DESCRIPTIONS = {
+  low: "Low tier — minimal capability, suitable only for simple tasks",
   frontier: "Frontier tier — strongest available, best for hard reasoning, architecture and multi-file work",
   strong: "Strong tier — very capable general-purpose model, handles most complex coding tasks",
   mid: "Mid tier — solid for routine coding, refactors and well-defined tasks",
@@ -65,10 +66,13 @@ const TIER_PREFIXES = [
   ["qwen3-flash", "fast"],
 ];
 
-/** Returns "frontier" | "strong" | "mid" | "fast" | null for a bare model name. */
-export function getModelTier(bareModel) {
+/** Returns a quality tier (including user-defined low) or null for a bare model name. */
+export function getModelTier(bareModel, overrides = {}) {
   if (!bareModel) return null;
-  const name = bareModel.toLowerCase().replace(/^@cf\//, "").split("/").pop();
+  const normalized = String(bareModel).toLowerCase();
+  const override = Object.entries(overrides || {}).find(([id]) => id.toLowerCase() === normalized);
+  if (override && ["low", "fast", "mid", "strong", "frontier"].includes(override[1])) return override[1];
+  const name = normalized.replace(/^@cf\//, "").split("/").pop();
   let best = null;
   for (const [prefix, tier] of TIER_PREFIXES) {
     if (name.includes(prefix) && (!best || prefix.length > best[0].length)) best = [prefix, tier];
@@ -79,41 +83,39 @@ export function getModelTier(bareModel) {
 /**
  * User-controlled tier preference ("Modell-Klasse" slider in the dashboard).
  *
- * Ordered from cheapest/smallest to strongest. Each step restricts which tiers
- * Jev may choose from and carries a hint that is appended to Jev's instructions.
- * "balanced" is the neutral default: every tier stays available and Jev decides
- * purely from the request.
+ * Preferences express a soft routing bias. They never reduce the candidate pool;
+ * the hint is appended to Jev's instructions while every eligible model remains available.
  */
 export const TIER_PREFERENCES = [
   {
     id: "fast",
     label: "Nur kleine Modelle",
     tiers: ["fast"],
-    hint: "User preference: ONLY small/fast models. Always pick the cheapest suitable model.",
+    hint: "User preference: strongly prefer FAST/small models when suitable, but all model tiers remain available; use stronger models when the request needs them.",
   },
   {
     id: "eco",
     label: "Sparsam",
     tiers: ["fast", "mid"],
-    hint: "User preference: economy mode. Prefer FAST and MID models; larger models are not offered.",
+    hint: "User preference: prefer FAST and MID models for suitable requests to reduce cost; all model tiers remain available when the request needs them.",
   },
   {
     id: "balanced",
     label: "Ausgewogen",
-    tiers: ["fast", "mid", "strong", "frontier"],
+    tiers: ["low", "fast", "mid", "strong", "frontier"],
     hint: "",
   },
   {
     id: "quality",
     label: "Starke Modelle",
     tiers: ["strong", "frontier"],
-    hint: "User preference: quality mode. Only STRONG and FRONTIER models are offered; prefer the higher tier when the task is non-trivial.",
+    hint: "User preference: lean toward STRONG and FRONTIER models when the request is non-trivial; all model tiers remain available for simple requests or better fit.",
   },
   {
     id: "max",
     label: "Nur Top-Modelle",
     tiers: ["frontier"],
-    hint: "User preference: maximum quality. Only FRONTIER models are offered; cost is not a concern.",
+    hint: "User preference: strongly prefer FRONTIER models for complex work; all model tiers remain available when the task does not require them.",
   },
 ];
 
@@ -132,32 +134,8 @@ export function getTierPreference(value) {
   return PREFERENCE_BY_ID.get(normalizeTierPreference(value) || DEFAULT_TIER_PREFERENCE);
 }
 
-/**
- * Restrict Jev's candidate pool to the tiers a preference allows.
- *
- * - "balanced" (or an unknown value) leaves the pool untouched.
- * - Models whose tier is unknown are dropped in restricted modes so a
- *   "small models only" setting can never surface an unclassified frontier model.
- * - If the filter would empty the pool, the original pool is returned and
- *   `applied` is false: a preference must never break routing.
- *
- * bareModelOf: maps a candidate id ("cc/claude-opus-5") to its bare model name.
- */
-export function filterModelsByTierPreference(models, value, bareModelOf = defaultBareModelOf) {
-  const preference = getTierPreference(value);
-  const input = Array.isArray(models) ? models : [];
-  if (preference.id === DEFAULT_TIER_PREFERENCE) {
-    return { models: input, applied: false, preference, dropped: 0 };
-  }
-  const allowed = new Set(preference.tiers);
-  const kept = input.filter((modelId) => allowed.has(getModelTier(bareModelOf(modelId))));
-  if (kept.length === 0) {
-    return { models: input, applied: false, preference, dropped: 0 };
-  }
-  return { models: kept, applied: true, preference, dropped: input.length - kept.length };
+/** Keep every eligible model; tier preference only changes Jev's prompt hint. */
+export function filterModelsByTierPreference(models, value) {
+  return { models: Array.isArray(models) ? models : [], applied: false, preference: getTierPreference(value), dropped: 0 };
 }
 
-function defaultBareModelOf(modelId) {
-  const slash = String(modelId).indexOf("/");
-  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
-}

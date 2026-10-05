@@ -81,7 +81,19 @@ export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
       ? levelRaw.charAt(0).toUpperCase() + levelRaw.slice(1).toLowerCase()
       : "Unknown";
 
-    return { plan, quotas };
+    const availableResetCredits = Math.max(0,
+      Number(data.cards?.length) ||
+      Number(data.resetCards?.length) ||
+      Number(data.reset_credits?.available_count) ||
+      Number(data.quota_cards) ||
+      0
+    );
+
+    return {
+      plan,
+      resetCredits: { availableCount: availableResetCredits },
+      quotas,
+    };
   } catch (error) {
     return { message: `GLM error: ${error.message}` };
   }

@@ -1,6 +1,9 @@
 # Unreleased
 
-## Features
+- **Quota Reset Credits & Manual Reset (Codex, Claude, GLM)**: Added reset credit counter and manual quota reset button across the Cockpit ([`CompactQuotaTracker.js`](file:///home/oguz/projects/Pirouter/src/app/(dashboard)/dashboard/cockpit/CompactQuotaTracker.js)) and Usage ([`ProviderLimits`](file:///home/oguz/projects/Pirouter/src/app/(dashboard)/dashboard/usage/components/ProviderLimits/index.js)) pages. Supports OpenAI Codex reset credits (`consumeCodexRateLimitResetCredit`), Anthropic Claude limit locks & cache clearing (`clearClaudeUsageCache`), and Zhipu GLM quota reset cards. Clearing cooldowns unlocks blocked models immediately on PiRouter via `clearConnectionLocks`.
+- **Cockpit / Active Sessions & Ping Visualizer**: Add interactive visualization of active sessions and pings (`ActiveSessionsVisualizer.js`) showing real-time waveform nodes (`#1`, `#2`, `#3`...), cache hit/live indicators, latency, current context size against model limits, and total accumulated context with cache efficiency.
+- **Session Cache Persistence**: Persist session cache registries and sticky model pins to SQLite (`kv` table in `data.sqlite`) so sessions, session IDs, turn histories, and cache hit tracking survive PiRouter / Docker container restarts. Hydration runs automatically on server boot (`instrumentation.js`) and on Cockpit data fetch.
+- **Combos / Haiku Separation**: Case-insensitive combo matching (`Haiku`, `haiku`) and explicit exclusion of Haiku models from Jev's candidate selection pool. Requests for `Haiku` route directly through the system combo fallback cascade without touching Jev.
 - **Jev / Cockpit**: add a "Modell-Klasse" slider (small models ↔ Fable/Opus) in the Cockpit's Jev card and in Profile → Jev AI Routing. The setting (`jevTierPreference`: `fast` | `eco` | `balanced` | `quality` | `max`) restricts Jev's candidate pool to the allowed quality tiers on every routing decision and appends a matching preference hint to Jev's instructions. `balanced` keeps today's behaviour; a restriction that would empty the pool is ignored so routing never breaks.
 
 # v0.5.81 (2026-09-18)

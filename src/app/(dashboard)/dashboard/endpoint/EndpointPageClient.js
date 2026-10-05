@@ -1036,9 +1036,27 @@ export default function APIPageClient({ machineId }) {
                       </span>
                     </button>
                   </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted mt-2">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">calendar_today</span>
+                      Erstellt: {key.createdAt ? new Date(key.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}
+                    </span>
+                    <span className="text-border">•</span>
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">history</span>
+                      Zuletzt genutzt: {key.lastUsed ? new Date(key.lastUsed).toLocaleString() : "Noch nie"}
+                    </span>
+                    <span className="text-border">•</span>
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">today</span>
+                      Heute: <strong className="font-semibold text-text-main">{key.requestsToday?.toLocaleString() || 0}</strong>
+                    </span>
+                    <span className="text-border">•</span>
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">bar_chart</span>
+                      Gesamt: <strong className="font-semibold text-text-main">{key.totalRequests?.toLocaleString() || 0}</strong>
+                    </span>
+                  </div>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}

@@ -156,7 +156,7 @@ export async function handleChat(request, clientRawRequest = null) {
       const allActiveModels = await buildModelsList(["llm"], { skipDynamicFetch: true });
       // Exclude combos from active models — Jev must only route to concrete provider models (with slash)
       const activeConcreteModels = allActiveModels.filter(
-        (m) => m.owned_by !== "combo" && typeof m.id === "string" && m.id.includes("/")
+        (m) => m.owned_by !== "combo" && m.owned_by !== "9router" && typeof m.id === "string" && m.id.includes("/")
       );
       const activeIds = new Set(activeConcreteModels.map((m) => m.id));
 
@@ -358,7 +358,9 @@ export async function handleChat(request, clientRawRequest = null) {
     const resolvedProvider = providerFromModelId(routedModel);
     // Keep lightweight probePrefix (first 2-4 messages) so keep-alive daemon can refresh prompt cache upstream
     const probeMessages = Array.isArray(body?.messages)
-      ? body.messages.slice(0, 4).map((m) => ({
+      ? body.messages.filter((m) => m?.role === "system" || m?.role === "developer").slice(0, 2)
+        .concat(body.messages.filter((m) => m?.role !== "system" && m?.role !== "developer").slice(0, 2))
+        .map((m) => ({
           role: m.role,
           content: typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? m.content.filter(p => p?.type === "text") : ""),
         }))
@@ -391,11 +393,18 @@ export async function handleChat(request, clientRawRequest = null) {
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(routedModel);
   if (comboModels) {
+    // A combo can outlive a retired upstream model. Health locks are authoritative
+    // for every router path, not only Jev, so a 410 is never retried by compaction.
+    const unavailableModels = await getUnavailableModelIds();
+    const healthyComboModels = comboModels.filter((id) => !unavailableModels.has(id));
+    if (healthyComboModels.length === 0) {
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No healthy models in combo: ${routedModel}`);
+    }
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[routedModel]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, routedModel));
+    const peakModels = filterPeakHours(healthyComboModels, getPeakForCombo(settings, routedModel));
     const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, settings);
     const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
@@ -476,13 +485,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   if (!modelInfo.provider) {
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
+      const unavailableModels = await getUnavailableModelIds();
+      const healthyComboModels = comboModels.filter((id) => !unavailableModels.has(id));
+      if (healthyComboModels.length === 0) {
+        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No healthy models in combo: ${modelStr}`);
+      }
       const chatSettings = await getSettings();
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
       const requiredCapabilities = detectRequiredCapabilities(body);
-      const peakModels = filterPeakHours(comboModels, getPeakForCombo(settings, modelStr));
+      const peakModels = filterPeakHours(healthyComboModels, getPeakForCombo(settings, modelStr));
       const augmentedModels = augmentModelsWithCapacityAdapter(peakModels, requiredCapabilities, chatSettings);
       const adapterAdded = augmentedModels.filter((m) => !peakModels.includes(m));
 
@@ -637,7 +651,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
-    recordModelFailure({
+    // Persist permanent/cooldown locks before this request can retry or a new
+    // Jev selection reads the pool. Otherwise unsupported models remain eligible.
+    await recordModelFailure({
       provider,
       model,
       connectionId: credentials.connectionId,
@@ -647,7 +663,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Check if failure is rate limit (429) or quota exhausted and record failure for session
     if (sessKey && (result.status === 429 || result.status === 402 || result.status === 403 || String(result.error).toLowerCase().includes("quota") || String(result.error).toLowerCase().includes("rate limit"))) {
-      const { triggered, count } = recordSessionProviderFailure(sessKey, provider);
+      // Quota exhaustion cannot recover within the same session retry window.
+      // Evict this provider immediately so the client's retry gets another route.
+      const { triggered, count } = recordSessionProviderFailure(sessKey, provider, 1);
       if (triggered) {
         clearSessionModel(sessKey);
         clearCachedJevDecisionBySession(sessKey);
@@ -658,7 +676,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // If request failed with 413 or context window overflow, clear Jev decision cache
     // and session stickiness for this model so it is not picked again on next turn.
-    if (result.status === 413 || String(result.error).toLowerCase().includes("context window limit") || String(result.error).toLowerCase().includes("exceeded this model context")) {
+    if (result.status === 413 || /context window limit|exceeds the context window|exceeded this model context|prompt token count|model_max_prompt_tokens_exceeded/i.test(String(result.error))) {
       clearSessionModelByModel(model);
       clearSessionModelByModel(`${provider}/${model}`);
       clearCachedJevDecisionByModel(model);

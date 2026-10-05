@@ -70,7 +70,7 @@ export function getCacheStats() {
 }
 
 // Cleanup stale pins (>1h old)
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, pin] of sessionPins.entries()) {
     if (now - pin.pinnedAt > 3600000) {
@@ -78,3 +78,4 @@ setInterval(() => {
     }
   }
 }, 600000); // Check every 10 min
+cleanupTimer?.unref?.();

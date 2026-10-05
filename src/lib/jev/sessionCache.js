@@ -492,7 +492,7 @@ export function getKeepAliveCandidates({
   maxIdleMs = 285_000, // 4m 45s (before 5m TTL expires)
   maxSessionWindowMs = 45 * 60 * 1000, // Explicit sessions: 45m without user activity
   topSessionWindowMs = 2 * 60 * 60 * 1000, // Top sessions: 2h without user activity
-  topN = 3,
+  topN = 20,
   globalEnabled = true,
 } = {}) {
   if (!globalEnabled) return [];
@@ -500,8 +500,10 @@ export function getKeepAliveCandidates({
   pruneExpired(sessions);
   const now = Date.now();
 
-  // Find Top N active sessions
+  // Rank only sessions that can actually be probed; otherwise unusable entries
+  // consume the Top N slots and eligible sessions never get warmed.
   const activeEntries = [...sessions.entries()]
+    .filter(([_, entry]) => entry.probePrefix?.messages?.length > 0)
     .filter(([_, entry]) => now - (entry.lastUserActive ?? entry.createdAt) <= topSessionWindowMs)
     .sort((a, b) => (b[1].requests || 0) - (a[1].requests || 0));
 

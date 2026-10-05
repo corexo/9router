@@ -10,5 +10,14 @@ export async function register() {
 
     const { startModelCatalogSync } = await import("@/lib/modelCatalog/sync.js");
     startModelCatalogSync();
+
+    const { hydrateSessionCacheFromDb } = await import("@/lib/jev/sessionCache.js");
+    await hydrateSessionCacheFromDb().catch(() => {});
+
+    const { hydrateSessionModelsFromDb } = await import("@/lib/jev/sessionModels.js");
+    await hydrateSessionModelsFromDb().catch(() => {});
+
+    const { startCacheKeepAlive } = await import("@/sse/services/cacheKeepAlive.js");
+    startCacheKeepAlive();
   }
 }

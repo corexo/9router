@@ -21,6 +21,27 @@ export const QUOTA_SORT_OPTIONS = [
   { value: "remaining-desc", label: "% quota: high to low" },
 ];
 
+export const RESET_CREDIT_PROVIDERS = ["codex", "claude", "glm", "glm-cn"];
+
+export function supportsResetCredits(provider) {
+  return RESET_CREDIT_PROVIDERS.includes(String(provider || "").toLowerCase());
+}
+
+export function getResetCreditCount(quota) {
+  if (!quota || typeof quota !== "object") return 0;
+  const raw = quota.raw || quota;
+  const count =
+    raw?.resetCredits?.availableCount ??
+    raw?.rate_limit_reset_credits?.available_count ??
+    raw?.reset_credits?.available_count ??
+    raw?.cards?.length ??
+    raw?.resetCards?.length ??
+    quota?.resetCredits?.availableCount ??
+    0;
+  const num = typeof count === "number" ? count : Number(count);
+  return Number.isFinite(num) ? Math.max(0, num) : 0;
+}
+
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 export function getConnectionLabel(connection) {
   return connection.name?.trim()
@@ -255,6 +276,79 @@ export function formatResetTime(date) {
     return `${days}d ${remainingHours}h ${remainingMinutes}m`;
   } catch (error) {
     return "-";
+  }
+}
+
+/**
+ * Compute reset time progress with duration, percentage elapsed/remaining and formatted countdown
+ * @param {string|Date} date - ISO date string or Date object
+ * @param {string} quotaName - Name of the quota (e.g. "session (5h)", "weekly (7d)")
+ * @returns {Object|null} Progress object with { countdownText, remainingMs, percentRemaining, percentElapsed, totalWindowLabel }
+ */
+export function computeResetTimeProgress(date, quotaName = "") {
+  if (!date) return null;
+
+  try {
+    const resetDate = typeof date === "string" ? new Date(date) : date;
+    const now = new Date();
+    const diffMs = resetDate.getTime() - now.getTime();
+
+    if (diffMs <= 0 || !Number.isFinite(diffMs)) {
+      return {
+        countdownText: "Fällig",
+        remainingMs: 0,
+        percentRemaining: 0,
+        percentElapsed: 100,
+        totalWindowLabel: "Sofort",
+      };
+    }
+
+    const name = String(quotaName || "").toLowerCase();
+    let totalWindowMs = 7 * 24 * 3600 * 1000;
+    let totalWindowLabel = "7d-Woche";
+
+    if (name.includes("5h") || name.includes("session")) {
+      totalWindowMs = 5 * 3600 * 1000;
+      totalWindowLabel = "5h-Fenster";
+    } else if (name.includes("24h") || name.includes("daily") || name.includes("day")) {
+      totalWindowMs = 24 * 3600 * 1000;
+      totalWindowLabel = "24h-Tag";
+    } else if (name.includes("7d") || name.includes("weekly") || name.includes("week")) {
+      totalWindowMs = 7 * 24 * 3600 * 1000;
+      totalWindowLabel = "7d-Woche";
+    } else if (name.includes("month")) {
+      totalWindowMs = 30 * 24 * 3600 * 1000;
+      totalWindowLabel = "Monat";
+    } else {
+      if (diffMs <= 5.5 * 3600 * 1000) {
+        totalWindowMs = 5 * 3600 * 1000;
+        totalWindowLabel = "5h-Fenster";
+      } else if (diffMs <= 25 * 3600 * 1000) {
+        totalWindowMs = 24 * 3600 * 1000;
+        totalWindowLabel = "24h-Tag";
+      } else if (diffMs <= 8 * 24 * 3600 * 1000) {
+        totalWindowMs = 7 * 24 * 3600 * 1000;
+        totalWindowLabel = "7d-Woche";
+      } else {
+        totalWindowMs = 30 * 24 * 3600 * 1000;
+        totalWindowLabel = "Monat";
+      }
+    }
+
+    const elapsedMs = Math.max(0, totalWindowMs - diffMs);
+    const percentElapsed = Math.min(100, Math.max(0, Math.round((elapsedMs / totalWindowMs) * 100)));
+    const percentRemaining = Math.max(0, 100 - percentElapsed);
+    const countdownText = formatResetTime(resetDate);
+
+    return {
+      countdownText,
+      remainingMs: diffMs,
+      percentRemaining,
+      percentElapsed,
+      totalWindowLabel,
+    };
+  } catch {
+    return null;
   }
 }
 

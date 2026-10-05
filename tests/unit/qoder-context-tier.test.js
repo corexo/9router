@@ -87,6 +87,10 @@ describe("estimateQoderPromptTokens", () => {
     expect(ascii).toBeLessThan(1_200);
     expect(cjk).toBeGreaterThan(4_000);
   });
+
+  it("counts OpenAI Responses input when Jev filters candidate windows", () => {
+    expect(estimateQoderPromptTokens({ input: [{ role: "user", content: "a".repeat(48_000) }] })).toBeGreaterThan(12_000);
+  });
 });
 
 describe("resolveQoderContextTier (auto)", () => {

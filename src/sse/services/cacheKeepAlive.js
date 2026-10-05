@@ -155,7 +155,7 @@ export async function runCacheKeepAliveTick() {
     }
 
     const intervalSecs = Number(settings.cacheKeepAliveIntervalSecs) || 240;
-    const maxSessions = Number(settings.cacheKeepAliveMaxSessions) || 3;
+    const maxSessions = Number(settings.cacheKeepAliveMaxSessions) || 20;
     const maxIdleMins = Number(settings.cacheKeepAliveMaxIdleMins) || 45;
 
     // Window: trigger probes between (intervalSecs - 30) and (intervalSecs + 30)
