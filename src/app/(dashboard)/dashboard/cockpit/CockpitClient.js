@@ -62,6 +62,7 @@ const PROVIDER_COLORS = {
 export default function CockpitClient() {
   const [period, setPeriod] = usePersistentState("9router_period", "7d");
   const [data, setData] = useState(null);
+  const [piSessions, setPiSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = usePersistentState("9router_cockpit_auto_refresh", true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -269,11 +270,16 @@ export default function CockpitClient() {
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
     try {
-      const [res, jevRes, combosRes] = await Promise.all([
+      const [res, jevRes, combosRes, sessionsRes] = await Promise.all([
         fetch(`/api/dashboard/cockpit?period=${period}`),
         fetch("/api/debug/jev").catch(() => null),
         fetch("/api/combos").catch(() => null),
+        fetch("/api/usage/cache-sessions?cockpit=true").catch(() => null),
       ]);
+      if (sessionsRes?.ok) {
+        const { sessions = [] } = await sessionsRes.json();
+        setPiSessions(sessions.filter((session) => session.piProjectPath));
+      } else setPiSessions([]);
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -1532,6 +1538,21 @@ export default function CockpitClient() {
           </div>
         </Card>
       </div>
+
+      {/* Pi project folders are informational only, never routing inputs. */}
+      {piSessions.length > 0 && (
+        <Card padding="md">
+          <h2 className="text-base font-semibold text-text-main mb-3">Pi Sessions · Projektordner</h2>
+          <ul className="space-y-2">
+            {piSessions.map((session) => (
+              <li key={session.cacheId} className="flex flex-wrap gap-2 text-xs text-text-muted">
+                <span className="font-mono">Session #{session.cacheId.slice(0, 8)}</span>
+                <span className="font-mono break-all text-text-main">{session.piProjectPath}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* COMPACT REDESIGNED QUOTA TRACKER */}
       <CompactQuotaTracker />

@@ -63,9 +63,11 @@ export const ERROR_RULES = [
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },
+  { text: "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count", cooldownMs: 10 * 1000 },
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },
+  { text: "resource_exhausted",        cooldownMs: 10 * 1000 },
   { text: "capacity",                 backoff: true },
   { text: "overloaded",               backoff: true },
 

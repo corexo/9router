@@ -8,6 +8,7 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get("filter");
+    const showPath = searchParams.get("cockpit") === "true";
 
     let list = getSessionCacheSnapshot({ includeTurns: true });
     if (filter === "active") {
@@ -21,6 +22,7 @@ export async function GET(request) {
         models,
         providers,
         connectionId,
+        piProjectPath,
         cachedTokens,
         promptTokens,
         requests,
@@ -41,6 +43,7 @@ export async function GET(request) {
         providers: providers || [],
         provider: providers?.[0] || null,
         connectionId: connectionId || null,
+        ...(showPath ? { piProjectPath: piProjectPath || null } : {}),
         cacheActive,
         cachedTokens,
         promptTokens,

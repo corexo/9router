@@ -105,9 +105,9 @@ describe("session cache registry", () => {
     expect(Object.keys(entry).sort()).toEqual([
       "cacheActive", "cacheId", "cachedTokens", "connectionId", "createdAt",
       "hasProbePrefix", "keepAliveEnabled", "keepAlivePingCount", "lastActive",
-      "lastKeepAliveAt", "lastKeepAliveStatus", "models", "promptTokens",
-      "providers", "requests", "state", "ttlRemainingSecs"
-    ].sort());
+      "lastKeepAliveAt", "lastKeepAliveStatus", "models", "piProjectPath",
+      "promptTokens", "providers", "requests", "state", "ttlRemainingSecs",
+    ]);
     const raw = JSON.stringify(entry);
     expect(raw).not.toContain("messages");
     expect(raw).not.toContain("api");

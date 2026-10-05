@@ -29,6 +29,17 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
     expect(checkFallbackError(422, "quota exceeded").shouldFallback).toBe(true);
   });
 
+  it("locks Gemini free-tier RESOURCE_EXHAUSTED for the provider retry delay", () => {
+    const result = checkFallbackError(429, JSON.stringify({ error: {
+      status: "RESOURCE_EXHAUSTED",
+      message: "Quota exceeded for quota metric generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0",
+      details: [{ retryDelay: "10s" }],
+    }}));
+
+    expect(result.shouldFallback).toBe(true);
+    expect(result.cooldownMs).toBe(10_000);
+  });
+
   it("keeps the transient cooldown for unmatched server errors", () => {
     const result = checkFallbackError(503, "upstream exploded");
 
