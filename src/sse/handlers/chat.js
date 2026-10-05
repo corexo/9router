@@ -40,7 +40,7 @@ import {
   clearSessionProviderFailure,
   getSessionPenalizedProviders,
 } from "@/lib/jev/sessionModels.js";
-import { touchSessionCache, getSessionCacheMeta, clearSessionCacheByModel, getSessionConnection, setSessionConnection, clearSessionConnection } from "@/lib/jev/sessionCache.js";
+import { touchSessionCache, setSessionProjectPath, getSessionCacheMeta, clearSessionCacheByModel, getSessionConnection, setSessionConnection, clearSessionConnection } from "@/lib/jev/sessionCache.js";
 import { filterModelsByTierPreference } from "../services/modelTiers.js";
 import { fitsJevContext } from "../services/jevContext.js";
 import { getUnavailableModelIds, recordModelFailure, recordModelSuccess, getModelHealth } from "@/lib/modelHealth.js";
@@ -87,6 +87,12 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
+
+  // The Pi path is only for the Cockpit: remove it before logging, routing,
+  // translation or forwarding the request to any upstream provider.
+  const piProjectPath = body?.pi_project_path;
+  if (body && typeof body === "object") delete body.pi_project_path;
+  if (clientRawRequest?.body && typeof clientRawRequest.body === "object") delete clientRawRequest.body.pi_project_path;
 
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
@@ -366,16 +372,18 @@ export async function handleChat(request, clientRawRequest = null) {
 
     if (!(isJev1m || JEV_MODEL_ALIASES.has(modelStr))) {
       touchSessionCache(sessKey, {
+        piProjectPath,
         model: isConcrete ? routedModel : null,
         provider: resolvedProvider,
         promptTokens: estimateQoderPromptTokens(body),
         probePrefix: probeMessages ? { messages: probeMessages, model: routedModel, provider: resolvedProvider } : undefined,
       });
-    } else if (probeMessages) {
-      // For Jev sessions, update probePrefix too
-      touchSessionCache(sessKey, {
+    } else {
+      // Keep Jev's existing probePrefix update; the display path is independent.
+      if (probeMessages) touchSessionCache(sessKey, {
         probePrefix: { messages: probeMessages, model: routedModel, provider: resolvedProvider },
       });
+      setSessionProjectPath(sessKey, piProjectPath);
     }
   }
   const cacheMeta = sessKey ? getSessionCacheMeta(sessKey) : null;
