@@ -23,6 +23,10 @@ Primary runtime model:
 - Next.js app routes under `src/app/api/*` implement both dashboard APIs and compatibility APIs
 - A shared SSE/routing core in `src/sse/*` + `open-sse/*` handles provider execution, translation, streaming, fallback, and usage
 
+## Pi project folder display metadata
+
+Pi's `before_provider_request` hook sends optional top-level `pi_project_path` only to locally configured PiRouter `/v1` models. `src/sse/handlers/chat.js` removes it from the parsed body before Jev traces, session identity, routing, request logs, translation and upstream forwarding. The cache-session observability entry keeps a validated display-only copy (up to 1024 characters, no control characters); it never participates in session IDs, routing decisions or cache keys. `/api/usage/cache-sessions?cockpit=true` includes `piProjectPath` for the authenticated Cockpit card. The default session-list response omits it. The path remains local dashboard data and expires with the cache-session entry (2h inactivity); do not use this metadata for authorization or remote providers.
+
 ## Scope and Boundaries
 
 ### In Scope
