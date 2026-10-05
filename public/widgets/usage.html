@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><title>PiRouter Usage 24h</title>
+<style>
+:root{color-scheme:dark}
+body{font:13px/1.45 ui-sans-serif,system-ui,sans-serif;background:#16181d;color:#d7dae0;margin:0;padding:14px}
+h1{font-size:14px;margin:0 0 10px;color:#8ab4f8}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px}
+.kpi{background:#1e2128;border:1px solid #2a2e37;border-radius:8px;padding:8px 10px}
+.kpi b{display:block;font-size:17px;color:#e8eaed}
+.kpi span{font-size:11px;color:#9aa0a6}
+table{width:100%;border-collapse:collapse;margin-top:4px}
+th,td{text-align:left;padding:3px 6px;border-bottom:1px solid #23262d}
+th{color:#9aa0a6;font-weight:600;font-size:11px;text-transform:uppercase}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.sub{color:#9aa0a6;font-size:11px;margin:10px 0 2px;text-transform:uppercase;letter-spacing:.04em}
+.err{color:#f28b82}
+</style></head><body>
+<h1>PiRouter Usage — 24h</h1>
+<div id="content">lädt …</div>
+<script>
+const f=(n)=>n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n??0);
+const c=(v)=>"$"+(Number(v)||0).toFixed(2);
+async function load(){
+ try{
+  const r=await fetch("/api/widgets");if(!r.ok)throw new Error("HTTP "+r.status);
+  const d=await r.json();
+  const s=d.usage||{};
+  const provs=Object.entries(s.byProvider||{}).sort((a,b)=>(b[1].cost||0)-(a[1].cost||0)).slice(0,8);
+  const models=Object.entries(s.byModel||{}).sort((a,b)=>(b[1].requests||0)-(a[1].requests||0)).slice(0,8);
+  document.getElementById("content").innerHTML=
+   `<div class="grid">
+    <div class="kpi"><b>${f(s.totalRequests)}</b><span>Requests</span></div>
+    <div class="kpi"><b>${f(s.totalPromptTokens)}</b><span>Prompt-Tokens</span></div>
+    <div class="kpi"><b>${f(s.totalCompletionTokens)}</b><span>Output-Tokens</span></div>
+    <div class="kpi"><b>${f(s.totalCachedTokens)}</b><span>Cached</span></div>
+    <div class="kpi"><b>${c(s.totalCost)}</b><span>Kosten</span></div>
+   </div>
+   <div class="sub">Provider</div>
+   <table><tr><th>Provider</th><th class="num">Req</th><th class="num">In</th><th class="num">Out</th><th class="num">$</th></tr>
+   ${provs.map(([p,v])=>`<tr><td>${p}</td><td class="num">${f(v.requests)}</td><td class="num">${f(v.promptTokens)}</td><td class="num">${f(v.completionTokens)}</td><td class="num">${c(v.cost)}</td></tr>`).join("")}</table>
+   <div class="sub">Top-Modelle</div>
+   <table><tr><th>Modell</th><th class="num">Req</th><th class="num">Tokens</th><th class="num">$</th></tr>
+   ${models.map(([m,v])=>`<tr><td>${m}</td><td class="num">${f(v.requests)}</td><td class="num">${f((v.promptTokens||0)+(v.completionTokens||0))}</td><td class="num">${c(v.cost)}</td></tr>`).join("")}</table>`;
+ }catch(e){document.getElementById("content").innerHTML=`<span class="err">Fehler: ${e.message}</span>`}
+ finally{setTimeout(load,30000)}
+}
+load();
+</script></body></html>

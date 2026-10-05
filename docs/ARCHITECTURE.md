@@ -15,7 +15,12 @@ Core capabilities:
 - Account-level fallback (multi-account per provider)
 - OAuth + API-key provider connection management
 - Local persistence for providers, keys, aliases, combos, settings, pricing
+- Active sessions & prompt-cache observability with SQLite persistence ([details](ACTIVE_SESSIONS_AND_PERSISTENCE.md))
 - Usage/cost tracking and request logging
+- Jev model-tier preference is a soft instruction bias; it never removes otherwise eligible candidates from the routing pool
+- Upstream 5xx/timeout failures accumulate per provider/model: after three same-UTC-day failures that model is disabled for 24 hours; context/input errors and account-specific Codex model rejections do not count against the shared model health. Candidate criteria await effective pricing; absent or incomplete prices are shown as flat-rate instead of aborting selection and defaulting to the first pool model. Codex's account-specific unsupported-model response switches accounts without globally disabling the model.
+- Jev Inspector includes a native radial question/model-choice map derived from the in-memory Jev request traces; the map shows model-selection criteria and the selected model without external JEView dependencies
+- Account Quotas dashboard page reuses provider quota normalization and shows quota reset windows separately from OAuth token expiry (`expiresAt`)
 - Optional cloud sync for multi-device/state sync
 
 Primary runtime model:
@@ -115,7 +120,8 @@ Management domains:
 - Provider nodes: `src/app/api/provider-nodes*`
 - OAuth: `src/app/api/oauth/*`
 - Keys/aliases/combos/pricing: `src/app/api/keys*`, `src/app/api/models/alias`, `src/app/api/combos*`, `src/app/api/pricing`
-- Usage: `src/app/api/usage/*`
+- Usage: `src/app/api/usage/*`; dashboard account quota overview: `src/app/(dashboard)/dashboard/account-quotas/`
+- Widget aggregates: `src/app/api/widgets` (read-only, no credentials) consumed by `public/widgets/*.html` — embeddable in Obsidian canvas via iframes
 - Sync/cloud: `src/app/api/sync/*`, `src/app/api/cloud/*`
 - CLI tooling helpers: `src/app/api/cli-tools/*`
 
@@ -423,6 +429,8 @@ flowchart LR
 - `src/app/api/oauth/*`: OAuth/device-code flows
 - `src/app/api/keys*`: local API key lifecycle
 - `src/app/api/models/alias`: alias management
+- `src/app/api/jev/picker`: read-only Jev candidate pool, hard eligibility filters, health and account-balancer inputs for the dashboard Model Picker; tier preference is descriptive only and never excludes candidates
+- `settings.jevPoolModels` optionally pins Jev to a configured model list; unset means all active LLM models. `settings.jevModelTiers` stores exact model-ID tier overrides (`low`, `fast`, `mid`, `strong`, `frontier`), applied to Jev criteria and editable in Kanban-style tier columns (drag/drop or dropdown) with JSON import/export at `/dashboard/jev-pool`. Unknown models appear in an `Unbekannt` column until assigned. `jevTierDistributionEnabled=false` disables tier descriptions and preference hints; the saved `jevPoolModels` checkbox list is authoritative (including an empty list, which rejects Jev requests). Only an unset list defaults to active LLM models. Explicit selections bypass `local-first` exclusion, but still require active models and pass health/context/vision filters. Jev fallback is always chosen from the eligible list.
 - `src/app/api/combos*`: fallback combo management
 - `src/app/api/pricing`: pricing overrides for cost calculation
 - `src/app/api/usage/*`: usage and logs APIs

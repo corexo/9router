@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><title>PiRouter Modell-Health</title>
+<style>
+:root{color-scheme:dark}
+body{font:13px/1.45 ui-sans-serif,system-ui,sans-serif;background:#16181d;color:#d7dae0;margin:0;padding:14px}
+h1{font-size:14px;margin:0 0 10px;color:#8ab4f8}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:3px 6px;border-bottom:1px solid #23262d}
+th{color:#9aa0a6;font-weight:600;font-size:11px;text-transform:uppercase}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+.cooldown{background:#3c2f12;color:#fdd663}.disabled{background:#3c1d1d;color:#f28b82}
+.unsupported,.incompatible,.capability{background:#2d2d2d;color:#9aa0a6}
+.ok{background:#12301f;color:#81c995}
+.reason{color:#9aa0a6;font-size:12px}
+.sub{color:#9aa0a6;font-size:11px;margin:10px 0 2px;text-transform:uppercase;letter-spacing:.04em}
+.err{color:#f28b82}
+</style></head><body>
+<h1>PiRouter Modell-Health</h1>
+<div id="content">lädt …</div>
+<script>
+const BAD=["cooldown","disabled","unsupported","incompatible","capability"];
+async function load(){
+ try{
+  const r=await fetch("/api/widgets");if(!r.ok)throw new Error("HTTP "+r.status);
+  const d=await r.json();
+  const rows=(d.health||[]).filter(x=>BAD.includes(x.state));
+  rows.sort((a,b)=>String(a.state).localeCompare(b.state));
+  const until=(x)=>x.cooldownUntil||x.until||x.blockedUntil||x.expiresAt;
+  document.getElementById("content").innerHTML=
+   rows.length?
+   `<div class="sub">Gesperrt: ${rows.length}</div>
+   <table><tr><th>Modell</th><th>Status</th><th>bis</th><th>Grund</th></tr>
+   ${rows.map(x=>`<tr><td>${x.id}</td><td><span class="badge ${x.state}">${x.state}</span></td><td>${until(x)?new Date(until(x)).toLocaleString("de-DE"):"–"}</td><td class="reason">${(x.reason||x.lastError||"").slice(0,90)}</td></tr>`).join("")}</table>`
+   :`<span class="badge ok">alle Modelle verfügbar</span>`;
+ }catch(e){document.getElementById("content").innerHTML=`<span class="err">Fehler: ${e.message}</span>`}
+ finally{setTimeout(load,30000)}
+}
+load();
+</script></body></html>

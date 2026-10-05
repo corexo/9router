@@ -22,6 +22,8 @@ async function hasValidCliToken(request) {
 // Public API paths — no auth required (LLM API has its own key auth inside handler).
 const PUBLIC_API_PATHS = [
   "/api/health",
+  // Read-only widget aggregates; handler re-checks loopback peer IP (LAN/tunnel stays out).
+  "/api/widgets",
   "/api/init",
   "/api/locale",
   "/api/auth/login",
@@ -66,6 +68,7 @@ const PROTECTED_API_PATHS = [
   "/api/mcp",
   "/api/translator",
   "/api/tunnel",
+  "/api/jeview",
 ];
 
 // Routes that spawn child processes or read host secrets — restrict to localhost.
