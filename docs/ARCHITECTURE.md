@@ -237,7 +237,7 @@ flowchart TD
     Q -- No --> R[Return all unavailable]
 ```
 
-Fallback decisions are driven by `open-sse/services/accountFallback.js` using status codes and error-message heuristics.
+Fallback decisions are driven by `open-sse/services/accountFallback.js` using status codes and error-message heuristics. Gemini CLI `429 RESOURCE_EXHAUSTED` responses carrying the FreeTier input-token quota metric use the provider retry delay (currently 10 seconds), then move to the next eligible account/model instead of retrying the exhausted account. Ambiguous errors may receive one bounded Jev adjudication per request; only compact provider/model/status/trimmed-error metadata and eligible candidates are sent, never prompts or credentials. Invalid actions, timeout, or transport failure fall back to deterministic handling.
 
 ## OAuth Onboarding and Token Refresh Lifecycle
 
