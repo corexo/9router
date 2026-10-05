@@ -40,6 +40,20 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
     expect(result.cooldownMs).toBe(10_000);
   });
 
+  it("falls back with 24h cooldown for unsupported-model errors", () => {
+    for (const text of [
+      "model not supported",
+      "model is not supported",
+      "model_not_supported",
+      "not supported with a chatgpt account",
+      "not supported when using codex with a chatgpt account",
+    ]) {
+      const result = checkFallbackError(400, `[500]: ${text}`);
+      expect(result.shouldFallback).toBe(true);
+      expect(result.cooldownMs).toBe(24 * 60 * 60 * 1000);
+    }
+  });
+
   it("keeps the transient cooldown for unmatched server errors", () => {
     const result = checkFallbackError(503, "upstream exploded");
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
-import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
+import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
@@ -12,16 +12,10 @@ import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 import { resolveZedModels } from "open-sse/shared/zedAuth.js";
+import { resolveCodexLiveModels, mergeCodexModelsWithRegistry } from "open-sse/services/codexModels.js";
 import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
-
-// The /codex/models endpoint gates each entry by minimal_client_version against this
-// value, and codex CLI's own manifest (openai/codex codex-rs/models-manager/models.json)
-// already requires 0.144.0 for its newest models, so a stale client_version here comes
-// back 200 with those entries quietly missing instead of erroring.
-const CODEX_CLIENT_VERSION = "0.144.6";
-const CODEX_MODELS_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`;
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -50,27 +44,6 @@ const parseGeminiCliModels = (data) => {
 
   return [];
 };
-
-const appendCodexReviewModels = (models) => models.flatMap((model) => {
-  const id = model?.id || model?.slug || model?.model || model?.name;
-  if (!id) return [];
-  const name = model?.display_name || model?.displayName || model?.name || id;
-  const normalized = { ...model, id, name };
-  const isChatModel = (model?.type || "llm") !== "image" && !id.toLowerCase().includes("embed");
-  if (!isChatModel || id.endsWith("-review")) return [normalized];
-  return [
-    normalized,
-    {
-      ...normalized,
-      id: `${id}-review`,
-      name: `${name} Review`,
-      upstreamModelId: id,
-      quotaFamily: "review",
-    },
-  ];
-});
-
-const parseCodexModels = (data) => appendCodexReviewModels(parseOpenAIStyleModels(data));
 
 const createOpenAIModelsConfig = (url) => ({
   url,
@@ -147,20 +120,26 @@ const PROVIDER_MODELS_CONFIG = {
     parseResponse: (data) => data.models || []
   },
   codex: {
-    customResolver: buildOAuthResolver({
-      refreshFn: (conn) => refreshCodexToken(conn.refreshToken),
-      fetchFn: (token) => fetch(CODEX_MODELS_URL, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "originator": "codex_cli_rs"
-        }
-      }),
-      parseFn: parseCodexModels,
-      errorLabel: "Failed to fetch Codex models"
-    })
+    // Delegates to the shared live-model service (refresh-on-401 included);
+    // falls back to the static catalog so the dashboard never sees an empty list.
+    customResolver: async (connection) => {
+      const result = await resolveCodexLiveModels(
+        { accessToken: connection.accessToken, refreshToken: connection.refreshToken },
+        {
+          log: console,
+          onCredentialsRefreshed: async (refreshed) => {
+            await updateProviderCredentials(connection.id, refreshed);
+            connection.accessToken = refreshed.accessToken;
+            if (refreshed.refreshToken) connection.refreshToken = refreshed.refreshToken;
+          },
+        },
+      );
+      if (result.models.length > 0) return result;
+      return {
+        models: getStaticProviderModels("codex"),
+        warning: result.warning || "Codex returned no live models; falling back to static catalog.",
+      };
+    }
   },
   antigravity: {
     url: "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:models",
@@ -607,10 +586,20 @@ export async function GET(request, { params }) {
       if (result.error) {
         return NextResponse.json({ error: result.error }, { status: result.status || 500 });
       }
+      let models = result.models;
+      let discoveredCount;
+      // Codex only: merge live discovery with the static registry for display.
+      // Purely visual — discovered ids never enter the registry or routing paths.
+      if (connection.provider === "codex") {
+        const merged = mergeCodexModelsWithRegistry(models, getStaticProviderModels("codex"));
+        discoveredCount = merged.filter((m) => m.source === "discovered").length;
+        models = merged;
+      }
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models: result.models,
+        models,
+        ...(discoveredCount ? { discoveredCount } : {}),
         ...(result.warning ? { warning: result.warning } : {})
       });
     }

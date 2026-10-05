@@ -43,6 +43,7 @@ export const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 
 // Cooldown durations (ms)
 const COOLDOWN = {
+  day: 24 * 60 * 60 * 1000,
   long: 2 * 60 * 1000,
   short: 5 * 1000,
 };
@@ -58,8 +59,14 @@ const COOLDOWN = {
  */
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
-  // Codex may reject a model for one ChatGPT account while another account supports it.
-  { text: "not supported when using codex with a chatgpt account", cooldownMs: COOLDOWN.long },
+  // Unsupported-model errors are permanent for the account+model pair: retrying
+  // earlier only burns requests. Text rules win over the request-scoped 4xx
+  // "no cooldown" path because these failures are account-scoped, not request-scoped.
+  { text: "not supported when using codex with a chatgpt account", cooldownMs: COOLDOWN.day },
+  { text: "not supported with a chatgpt account", cooldownMs: COOLDOWN.day },
+  { text: "model is not supported",   cooldownMs: COOLDOWN.day },
+  { text: "model not supported",      cooldownMs: COOLDOWN.day },
+  { text: "model_not_supported",      cooldownMs: COOLDOWN.day },
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },
