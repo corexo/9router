@@ -513,31 +513,6 @@ async function showOpenCodeMenu(port, breadcrumb = []) {
   });
 }
 
-// ─── Hermes Agent ─────────────────────────────────────────────────────────────
-
-async function buildHermesHeader() {
-  if (!result.success) return `  ${COLORS.red}Failed to load settings${COLORS.reset}`;
-
-  const { installed, has9Router, settings } = result.data;
-  if (!installed) return `Status:   ${COLORS.red}✗ Hermes Agent not installed${COLORS.reset}`;
-
-  if (!has9Router) {
-    return [
-      `Status:   ${COLORS.red}✗ Not configured${COLORS.reset}`,
-      `${COLORS.dim}Run "Quick Setup" to configure${COLORS.reset}`
-    ].join("\n");
-  }
-
-  const model = settings?.model || {};
-  const lines = [`Status:   ${COLORS.green}✓ Configured${COLORS.reset}`];
-  if (model.base_url) lines.push(`Endpoint: ${COLORS.cyan}${model.base_url}${COLORS.reset}`);
-  if (model.default)  lines.push(`Model:    ${COLORS.dim}${model.default}${COLORS.reset}`);
-  return lines.join("\n");
-}
-
-    ]
-  });
-}
 
 // ─── Main CLI Tools Menu ──────────────────────────────────────────────────────
 
@@ -573,10 +548,6 @@ async function showCliToolsMenu(port, breadcrumb = []) {
         label: "OpenCode",
         action: async () => { await showOpenCodeMenu(port, [...breadcrumb, "OpenCode"]); return true; }
       },
-      {
-        label: "Hermes",
-        action: async () => { await showHermesMenu(port, [...breadcrumb, "Hermes"]); return true; }
-      }
     ]
   });
 }
