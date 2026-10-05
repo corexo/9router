@@ -1,0 +1,1 @@
+{"connections":[{"id":"c1","provider":"codex","name":"Work","isActive":true},{"id":"c2","provider":"claude","name":"Personal","isActive":true},{"id":"c3","provider":"glm","name":"Coding","isActive":true},{"id":"c4","provider":"glm-cn","name":"Backup","isActive":true},{"id":"c5","provider":"codex","name":"Inactive","isActive":false}]}
