@@ -629,6 +629,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Use shared chatCore
     let chatSettings = await getSettings();
+    const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
     if (apiKeyDetails?.ownerUsername) {
       const userPrefs = await getUserPrefs(apiKeyDetails.ownerUsername);
       chatSettings = { ...chatSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("rtk") || key.startsWith("headroom") || key.startsWith("caveman") || key.startsWith("ponytail") || key.startsWith("pxpipe") || key.startsWith("jev"))) };
