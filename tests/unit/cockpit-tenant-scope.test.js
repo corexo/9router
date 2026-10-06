@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCockpitData: vi.fn(),
@@ -13,6 +13,8 @@ vi.mock("next/server", () => ({ NextResponse: { json: (body, init) => ({ body, s
 
 const { GET } = await import("../../src/app/api/dashboard/cockpit/route.js");
 
+beforeEach(() => vi.clearAllMocks());
+
 describe("Cockpit tenant scoping", () => {
   it("passes moderator owner into the aggregate query", async () => {
     mocks.cookies.mockResolvedValue({ get: () => ({ value: "session" }) });
@@ -23,11 +25,11 @@ describe("Cockpit tenant scoping", () => {
     expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", "Ugur");
   });
 
-  it("keeps admin global scope", async () => {
+  it("scopes admin Cockpit data to the admin's own tenant", async () => {
     mocks.cookies.mockResolvedValue({ get: () => ({ value: "session" }) });
     mocks.verifyDashboardAuthToken.mockResolvedValue({ username: "Oguz", role: "admin" });
     mocks.getCockpitData.mockResolvedValue({ accounts: [] });
     await GET(new Request("http://localhost/api/dashboard/cockpit?period=7d"));
-    expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", null);
+    expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", "Oguz");
   });
 });
