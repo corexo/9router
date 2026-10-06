@@ -7,6 +7,8 @@ import {
   requestDeviceCode,
   pollForToken
 } from "@/lib/oauth/providers";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { createProviderConnection } from "@/models";
 import { readDesktopPassToken } from "open-sse/shared/mimoAccount.js";
 import {
@@ -467,8 +469,12 @@ export async function POST(request, { params }) {
         ...(systemId ? { systemId } : {}),
       });
 
+      const cookieStore = await cookies();
+      const claims = await verifyDashboardAuthToken(cookieStore.get("auth_token")?.value).catch(() => null);
+
       // Save to database
       const connection = await createProviderConnection({
+        ownerUsername: claims?.username || null,
         provider,
         authType: "oauth",
         ...tokenData,

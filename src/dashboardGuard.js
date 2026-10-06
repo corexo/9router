@@ -180,10 +180,21 @@ async function hasValidToken(request) {
 }
 
 export function isModeratorWrite(request, claims) {
-  return claims?.role === "moderator" && request.method !== "GET" && request.method !== "HEAD" &&
-    request.nextUrl.pathname !== "/api/auth/change-password" &&
-    request.nextUrl.pathname !== "/api/auth/logout" &&
-    request.nextUrl.pathname !== "/api/settings/user";
+  if (claims?.role !== "moderator" || request.method === "GET" || request.method === "HEAD") {
+    return false;
+  }
+  const path = request.nextUrl.pathname;
+  if (
+    path === "/api/auth/change-password" ||
+    path === "/api/auth/logout" ||
+    path === "/api/settings/user" ||
+    path.startsWith("/api/oauth/") ||
+    path === "/api/providers" ||
+    path.startsWith("/api/providers/")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 // Read settings directly from DB to avoid self-fetch deadlock in proxy
