@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, hasUsers } from "@/lib/localDb";
 import { isOidcConfigured } from "@/lib/auth/oidc";
 import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { getDashboardAuthSession } from "@/lib/auth/dashboardSession";
@@ -8,6 +8,7 @@ import { getDashboardAuthSession } from "@/lib/auth/dashboardSession";
 export async function GET() {
   try {
     const settings = await getSettings();
+    const usersExist = await hasUsers();
     const cookieStore = await cookies();
     const session = await getDashboardAuthSession(cookieStore.get("auth_token")?.value);
     const requireLogin = settings.requireLogin !== false;
@@ -29,6 +30,7 @@ export async function GET() {
 
     return NextResponse.json({
       requireLogin,
+      hasUsers: usersExist,
       authMode,
       ssoType,
       oidcConfigured: isOidcConfigured(settings),
@@ -49,6 +51,7 @@ export async function GET() {
   } catch {
     return NextResponse.json({
       requireLogin: true,
+      hasUsers: false,
       authMode: "password",
       ssoType: "oidc",
       oidcConfigured: false,

@@ -41,8 +41,8 @@ export async function createDashboardAuthToken(claims = {}) {
 export async function verifyDashboardAuthToken(token) {
   if (!token) return false;
   try {
-    await jwtVerify(token, SECRET);
-    return true;
+    const { payload } = await jwtVerify(token, SECRET);
+    return payload;
   } catch {
     return false;
   }

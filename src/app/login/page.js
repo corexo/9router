@@ -5,6 +5,8 @@ import { Card, Button, Input } from "@/shared/components";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [hasUsers, setHasUsers] = useState(false);
   const [error, setError] = useState("");
   const [resetHint, setResetHint] = useState("");
   const [retryAfter, setRetryAfter] = useState(0);
@@ -45,6 +47,7 @@ export default function LoginPage() {
             return;
           }
           setHasPassword(!!data.hasPassword);
+          setHasUsers(data.hasUsers === true);
           setAuthMode(data.authMode || "password");
           setSsoType(data.ssoType || "oidc");
           setOidcConfigured(data.oidcConfigured === true);
@@ -73,7 +76,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
 
       if (res.ok) {
@@ -217,6 +220,12 @@ export default function LoginPage() {
                   </p>
                 )}
 
+                {hasUsers && (
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor="login-username" className="text-sm font-medium">Username</label>
+                    <Input id="login-username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
+                  </div>
+                )}
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium">Password</label>
                   <Input
@@ -225,7 +234,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    autoFocus={!oidcAvailable}
+                    autoFocus={!oidcAvailable && !hasUsers}
                   />
                   {error && <p className="text-xs text-red-500">{error}</p>}
                   {retryAfter > 0 && (
@@ -250,10 +259,10 @@ export default function LoginPage() {
                   {retryAfter > 0 ? `Wait ${retryAfter}s` : "Login"}
                 </Button>
 
-                <p className="text-xs text-center text-text-muted mt-2">
+                {!hasUsers && <p className="text-xs text-center text-text-muted mt-2">
                   Default password is <code className="bg-sidebar px-1 rounded">123456</code>
-                </p>
-                {hasPassword === false && (
+                </p>}
+                {!hasUsers && hasPassword === false && (
                   <p className="text-xs text-center text-amber-600 dark:text-amber-400">
                     Security risk: no password set. You will be asked to set one when logging in remotely.
                   </p>
