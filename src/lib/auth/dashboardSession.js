@@ -52,6 +52,19 @@ export async function getDashboardAuthSession(token) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, SECRET);
+    // Role consistency: a token issued before a role change (or for a user
+    // since deactivated) must count as logged out, same as dashboardGuard.
+    if (payload?.username) {
+      try {
+        const { getUserByUsername } = await import("@/lib/db/repos/usersRepo");
+        const user = await getUserByUsername(payload.username);
+        if (!user || user.id !== payload.sub || user.isActive === false || user.role !== payload.role) {
+          return null;
+        }
+      } catch {
+        return null;
+      }
+    }
     return payload;
   } catch {
     return null;
