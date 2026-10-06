@@ -46,11 +46,12 @@ function rowToConn(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ownerUsername: row.ownerUsername || null,
   };
 }
 
 function connToRow(c) {
-  const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
+  const { id, provider, authType, name, email, priority, isActive, ownerUsername, createdAt, updatedAt, ...rest } = c;
   return {
     id,
     provider,
@@ -62,19 +63,21 @@ function connToRow(c) {
     data: stringifyJson(rest),
     createdAt,
     updatedAt,
+    ownerUsername: ownerUsername ?? null,
   };
 }
 
 function upsert(db, c) {
   const r = connToRow(c);
   db.run(
-    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, ownerUsername, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        provider=excluded.provider, authType=excluded.authType, name=excluded.name,
        email=excluded.email, priority=excluded.priority, isActive=excluded.isActive,
+       ownerUsername=COALESCE(excluded.ownerUsername, providerConnections.ownerUsername),
        data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.data, r.createdAt, r.updatedAt]
+    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.ownerUsername, r.data, r.createdAt, r.updatedAt]
   );
 }
 
@@ -95,6 +98,7 @@ export async function getProviderConnections(filter = {}) {
   const params = [];
   if (filter.provider) { where.push("provider = ?"); params.push(filter.provider); }
   if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
+  if (filter.ownerUsername) { where.push("ownerUsername = ?"); params.push(filter.ownerUsername); }
   const sql = `SELECT * FROM providerConnections${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const rows = db.all(sql, params);
   const list = rows.map(rowToConn);
@@ -192,6 +196,7 @@ export async function createProviderConnection(data) {
       name: connectionName,
       priority: connectionPriority,
       isActive: data.isActive !== undefined ? data.isActive : true,
+      ownerUsername: data.ownerUsername ?? null,
       createdAt: now,
       updatedAt: now,
     };

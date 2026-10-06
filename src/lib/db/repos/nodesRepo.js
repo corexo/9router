@@ -12,11 +12,12 @@ function rowToNode(row) {
     name: row.name,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ownerUsername: row.ownerUsername || null,
   };
 }
 
 function nodeToRow(n) {
-  const { id, type, name, createdAt, updatedAt, ...rest } = n;
+  const { id, type, name, ownerUsername, createdAt, updatedAt, ...rest } = n;
   return {
     id,
     type: type ?? null,
@@ -24,17 +25,20 @@ function nodeToRow(n) {
     data: stringifyJson(rest),
     createdAt,
     updatedAt,
+    ownerUsername: ownerUsername ?? null,
   };
 }
 
 function upsert(db, n) {
   const r = nodeToRow(n);
   db.run(
-    `INSERT INTO providerNodes(id, type, name, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?)
+    `INSERT INTO providerNodes(id, type, name, ownerUsername, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
-       type=excluded.type, name=excluded.name, data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.type, r.name, r.data, r.createdAt, r.updatedAt]
+       type=excluded.type, name=excluded.name,
+       ownerUsername=COALESCE(excluded.ownerUsername, providerNodes.ownerUsername),
+       data=excluded.data, updatedAt=excluded.updatedAt`,
+    [r.id, r.type, r.name, r.ownerUsername, r.data, r.createdAt, r.updatedAt]
   );
 }
 
@@ -43,6 +47,7 @@ export async function getProviderNodes(filter = {}) {
   const where = [];
   const params = [];
   if (filter.type) { where.push("type = ?"); params.push(filter.type); }
+  if (filter.ownerUsername) { where.push("ownerUsername = ?"); params.push(filter.ownerUsername); }
   const sql = `SELECT * FROM providerNodes${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   return db.all(sql, params).map(rowToNode);
 }
@@ -57,6 +62,7 @@ export async function createProviderNode(data) {
   const now = new Date().toISOString();
   const node = {
     id: data.id || uuidv4(),
+    ownerUsername: data.ownerUsername ?? null,
     type: data.type,
     name: data.name,
     prefix: data.prefix,

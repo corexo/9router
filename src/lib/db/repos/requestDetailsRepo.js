@@ -171,6 +171,10 @@ export async function getRequestDetails(filter = {}) {
   if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
+  if (Array.isArray(filter.connectionIds)) {
+    if (filter.connectionIds.length === 0) conds.push("1 = 0");
+    else { conds.push(`connectionId IN (${filter.connectionIds.map(() => "?").join(",")})`); params.push(...filter.connectionIds); }
+  }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }

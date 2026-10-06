@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getComboById, updateCombo, deleteCombo, getComboByName, BUILTIN_COMBOS } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -26,8 +30,13 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
+    const prev = await getComboById(id);
+    if (prev && caller?.role === "moderator" && prev.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     const body = await request.json();
-    
+
     // Validate name format if provided
     if (body.name) {
       if (!VALID_NAME_REGEX.test(body.name)) {
@@ -41,9 +50,6 @@ export async function PUT(request, { params }) {
       }
     }
     
-    // Capture previous name to invalidate rotation state on rename
-    const prev = await getComboById(id);
-
     // Built-in combos keep their name and kind; only their model list is editable
     if (prev && BUILTIN_COMBOS.includes(prev.name.toLowerCase())) {
       if (body.name && body.name !== prev.name) {
@@ -73,7 +79,11 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
     const prev = await getComboById(id);
+    if (prev && caller?.role === "moderator" && prev.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     if (prev && BUILTIN_COMBOS.includes(prev.name.toLowerCase())) {
       return NextResponse.json({ error: "Built-in combos cannot be deleted" }, { status: 400 });
     }

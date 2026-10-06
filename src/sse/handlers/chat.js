@@ -7,6 +7,7 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
+import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -115,6 +116,8 @@ export async function handleChat(request, clientRawRequest = null) {
   // Log API key (masked)
   const authHeader = request.headers.get("Authorization");
   const apiKey = extractApiKey(request);
+  const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
+  const ownerUsername = apiKeyDetails?.ownerUsername || null;
   if (authHeader && apiKey) {
     const masked = log.maskKey(apiKey);
     log.debug("AUTH", `API Key: ${masked}`);
@@ -129,7 +132,7 @@ export async function handleChat(request, clientRawRequest = null) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
@@ -288,7 +291,7 @@ export async function handleChat(request, clientRawRequest = null) {
         return isPaidModel(id, providerFromModelId, () => pricing) ? id : null;
       }))).filter(Boolean);
       if (!paidModels.length) return null;
-      const balancerAccounts = (await getProviderConnections()).filter((c) => c.isActive !== false && ["codex", "chatgpt", "openai", "glm", "glm-cn", "zai", "claude", "anthropic"].includes(c.provider));
+      const balancerAccounts = (await getProviderConnections(ownerUsername ? { ownerUsername } : {})).filter((c) => c.isActive !== false && ["codex", "chatgpt", "openai", "glm", "glm-cn", "zai", "claude", "anthropic"].includes(c.provider));
       const targetProvider = balancerAccounts.find((account) => paidModels.some((id) => providerFromModelId(id) === account.provider))?.provider;
       if (!targetProvider) return null;
       const accounts = balancerAccounts.filter((account) => account.provider === targetProvider);
@@ -340,7 +343,10 @@ export async function handleChat(request, clientRawRequest = null) {
       getPricingForModel: (provider, model) => getEffectivePricingForModel(provider, model),
       getCapabilitiesForModel,
       getModelHealth,
-      getProviderConnections,
+      getProviderConnections: async (filter = {}) => {
+        const connections = await getProviderConnections(filter);
+        return ownerUsername ? connections.filter((connection) => connection.ownerUsername === ownerUsername) : connections;
+      },
       getUsageStats,
       paidTrafficDistribution: isJevFree ? null : (paidTraffic?.request ? { ...paidTraffic, persistRequest: () => markPaidTrafficRequest({ provider: paidTraffic.provider, accounts: paidTraffic.accounts }, paidTraffic.request) } : paidTraffic),
     });
