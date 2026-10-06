@@ -2,6 +2,12 @@
 .git
 **/.git
 
+# Agent sessions, local planning, and generated graphs are not runtime source
+.pi
+.nodeterm
+.planning
+graphify-out
+
 # Editor
 .vscode
 **/.vscode
@@ -24,6 +30,7 @@ logs
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*
 
 # Debug logs
 npm-debug.log*

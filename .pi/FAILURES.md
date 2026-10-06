@@ -103,3 +103,8 @@ Bekannte Anti-Patterns, strukturiert erfasst mit `failures_record`. Vor riskante
 - Muster: PiRouter pre-commit protected tests/unit/session-cache-registry.test.js field whitelist changed by new piProjectPath, commit rejected
 - Warum es fehlschlägt: Repository feature-registry pre-commit policy treats test suites as read-only; legitimate test correction cannot be committed while test expects obsolete fields.
 - Richtig stattdessen: Keep test fix staged in isolated integration worktree, validate there; seek explicit policy change/authorized path instead of bypassing hook or dropping coverage.
+## F-130 — QNAP remote shell quote mismatch aborts stop command
+- Datum: 2026-10-05 · Projekt: Pirouter · Agent: main
+- Muster: ssh qnap inline shell with nested single quotes and jq/ls
+- Warum es fehlschlägt: Outer local shell consumed an unmatched quote before SSH, so no remote action executed.
+- Richtig stattdessen: Use a heredoc or double-quoted remote command; validate locally with bash -n before executing destructive operations.
