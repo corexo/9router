@@ -418,11 +418,11 @@ export default function CompactQuotaTracker() {
         </div>
       ) : viewMode === "grid" ? (
         /* COMPACT GRID VIEW (High-Density Cards) */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
           {filteredAccounts.map((acc) => (
             <div
               key={acc.id}
-              className={`p-3 rounded-xl border transition-all flex flex-col justify-between ${
+              className={`p-2.5 rounded-lg border transition-colors flex flex-col justify-between ${
                 acc.hasLowQuota
                   ? "border-rose-500/40 bg-rose-500/5 hover:border-rose-500/60"
                   : "border-border/60 bg-surface-2/40 hover:border-border"
@@ -483,7 +483,7 @@ export default function CompactQuotaTracker() {
                 </div>
 
                 {/* Quota Limits List */}
-                <div className="space-y-2.5 mt-2">
+                <div className="space-y-1 mt-1">
                   {acc.quotas.map((q, idx) => {
                     const pct = q.remainingPct;
                     const isLow = pct < 30;
@@ -499,21 +499,12 @@ export default function CompactQuotaTracker() {
                       : "text-emerald-600 dark:text-emerald-400 font-medium";
 
                     return (
-                      <div key={idx} className="flex flex-col gap-1 p-2 rounded-lg bg-surface-1/40 border border-border/40">
+                      <div key={idx} className="grid grid-cols-[minmax(74px,0.8fr)_auto_minmax(44px,0.45fr)_minmax(98px,auto)] items-center gap-x-2 gap-y-1 px-2 py-1.5 rounded-md bg-surface-1/40 border border-border/40">
                         {/* Quota Name & Percent Available */}
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-text-main font-medium truncate max-w-[130px]" title={q.name}>
-                            {q.name}
-                          </span>
-                          <div className="flex items-center gap-1.5 font-mono">
-                            <span className={textColor}>
-                              {pct}% frei
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Thin Quota Progress Bar */}
-                        <div className="w-full bg-surface-3 rounded-full h-1.5 overflow-hidden">
+                        <span className="text-[10px] text-text-main font-medium truncate" title={q.name}>{q.name}</span>
+                        <span className={`text-[11px] font-mono ${textColor}`}>{pct}% frei</span>
+                        {/* Quota left */}
+                        <div className="w-full bg-surface-3 rounded-full h-1 overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-300 ${barColor}`}
                             style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
@@ -522,32 +513,12 @@ export default function CompactQuotaTracker() {
 
                         {/* Time Window Progress Bar (Zeit-Balken) */}
                         {q.timeProgress ? (
-                          <div className="mt-1 pt-1 border-t border-border/30 flex flex-col gap-1">
-                            <div className="flex items-center justify-between text-[10px] font-mono">
-                              <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400 font-medium">
-                                <span className="material-symbols-outlined text-[12px]">schedule</span>
-                                <span>Reset in {q.timeProgress.countdownText}</span>
-                              </span>
-                              <span className="text-[9px] text-text-muted/70">
-                                {q.timeProgress.totalWindowLabel} ({q.timeProgress.percentElapsed}% abgelaufen)
-                              </span>
-                            </div>
-                            {/* Visual Time Bar */}
-                            <div
-                              className="w-full bg-surface-3 rounded-full h-1 overflow-hidden"
-                              title={`Zeitfenster (${q.timeProgress.totalWindowLabel}): ${q.timeProgress.percentElapsed}% abgelaufen, noch ${q.timeProgress.countdownText} verbleibend`}
-                            >
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
-                                style={{ width: `${Math.min(100, Math.max(3, q.timeProgress.percentElapsed))}%` }}
-                              />
-                            </div>
-                          </div>
+                          <span className="text-[10px] font-mono font-semibold text-cyan-700 dark:text-cyan-300 whitespace-nowrap text-right" title={`${q.timeProgress.totalWindowLabel}, ${q.timeProgress.percentElapsed}% abgelaufen`}>
+                            {q.timeProgress.countdownText}
+                          </span>
                         ) : q.resetCountdown && q.resetCountdown !== "-" ? (
-                          <div className="flex items-center justify-end text-[10px] text-text-muted font-mono mt-0.5">
-                            <span>Reset in {q.resetCountdown}</span>
-                          </div>
-                        ) : null}
+                          <span className="text-[10px] font-mono text-text-muted whitespace-nowrap text-right">{q.resetCountdown}</span>
+                        ) : <span /> }
                       </div>
                     );
                   })}
