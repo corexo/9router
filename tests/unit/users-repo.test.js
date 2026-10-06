@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), all: vi.fn(), run: vi.fn() }));
 vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: async () => mocks }));
-const { createUser, verifyLogin, listUsers } = await import("../../src/lib/db/repos/usersRepo.js");
+const { createUser, verifyLogin, listUsers, setPasswordHash } = await import("../../src/lib/db/repos/usersRepo.js");
 
 // Adapter mock keeps the password hash in memory; no real database or credentials.
 describe("users repo", () => {
@@ -19,5 +19,7 @@ describe("users repo", () => {
     expect(await verifyLogin("Oguz", "test-password")).not.toHaveProperty("passwordHash");
     expect(await verifyLogin("Oguz", "wrong")).toBeNull();
     expect(await listUsers()).not.toEqual(expect.arrayContaining([expect.objectContaining({ passwordHash: row.passwordHash })]));
+    await setPasswordHash(row.id, "new-hash");
+    expect(mocks.run.mock.calls.at(-1)[0]).toContain("mustChangePassword = 0");
   });
 });

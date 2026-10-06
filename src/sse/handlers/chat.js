@@ -8,6 +8,7 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
+import { getClientIp } from "@/lib/auth/loginLimiter.js";
 import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
@@ -117,7 +118,7 @@ export async function handleChat(request, clientRawRequest = null) {
   // Log API key (masked)
   const authHeader = request.headers.get("Authorization");
   const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
+  const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey, getClientIp(request)) : null;
   const ownerUsername = apiKeyDetails?.ownerUsername || null;
   if (authHeader && apiKey) {
     const masked = log.maskKey(apiKey);

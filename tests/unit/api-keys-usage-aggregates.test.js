@@ -15,6 +15,12 @@ describe("apiKeys usage aggregates", () => {
     expect(source.match(/SUM\(COALESCE\(promptTokens, 0\)\)/g)).toHaveLength(2); // list + detail
   });
 
+  it("records and exposes the last source IP for a used key", () => {
+    expect(source).toContain("lastUsedIp: row.lastUsedIp || null");
+    expect(source).toContain("UPDATE apiKeys SET lastUsedIp = ?, lastUsedAt = ?");
+    expect(source).toContain("validateApiKeyDetails(key, sourceIp = null)");
+  });
+
   it("exposes the aggregates through rowToKey", () => {
     expect(source).toContain("totalPromptTokens: Number(row.totalPromptTokens || 0)");
     expect(source).toContain("totalCompletionTokens: Number(row.totalCompletionTokens || 0)");

@@ -29,6 +29,7 @@ vi.mock("@/dashboardGuard", () => ({ isLocalRequest: mocks.isLocalRequest }));
 vi.mock("@/lib/auth/dashboardSession", () => ({ setDashboardAuthCookie: mocks.setDashboardAuthCookie }));
 vi.mock("@/lib/auth/oidc", () => ({ isOidcConfigured: () => false }));
 vi.mock("@/lib/auth/saml", () => ({ isSamlConfigured: () => false }));
+vi.mock("@/lib/db/repos/authAuditRepo.js", () => ({ recordLoginAttempt: vi.fn() }));
 
 const { POST } = await import("../../src/app/api/auth/login/route.js");
 const { recordSuccess } = await import("../../src/lib/auth/loginLimiter.js");

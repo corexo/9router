@@ -78,11 +78,7 @@ export default function APIPageClient({ machineId }) {
   const [visibleKeys, setVisibleKeys] = useState(new Set());
 
   // Client-side local/remote detection (UI hint only, not a security gate)
-  const [isRemoteHost, setIsRemoteHost] = useState(false);
-  useEffect(() => {
-    if (typeof window !== "undefined")
-      setIsRemoteHost(!["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
-  }, []);
+  const [isRemoteHost] = useState(() => typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -97,28 +93,7 @@ export default function APIPageClient({ machineId }) {
     if (tsLogRef.current) tsLogRef.current.scrollTop = tsLogRef.current.scrollHeight;
   }, [tsInstallLog]);
 
-  useEffect(() => {
-    fetchData();
-    loadSettings();
-  }, []);
 
-  // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
-  // Visibility re-check: refresh once when tab becomes visible.
-  useEffect(() => {
-    const anyEnabled = tunnelEnabled || tsEnabled;
-    if (!anyEnabled) return;
-    const tunnelHealthy = !tunnelEnabled || tunnelReachable;
-    const tsHealthy = !tsEnabled || tsReachable;
-    const allHealthy = tunnelHealthy && tsHealthy;
-    const onVisible = () => { if (!document.hidden) syncTunnelStatus(); };
-    document.addEventListener("visibilitychange", onVisible);
-    if (allHealthy) return () => document.removeEventListener("visibilitychange", onVisible);
-    const timer = setInterval(() => { if (!document.hidden) syncTunnelStatus(); }, STATUS_POLL_FAST_MS);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [tunnelEnabled, tsEnabled, tunnelReachable, tsReachable]);
 
   // Browser-side periodic ping: probes tunnel/tailscale URLs directly so UI stays
   // "reachable" even when backend DNS (1.1.1.1) hiccups on *.ts.net or *.trycloudflare.com.
@@ -227,6 +202,22 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  useEffect(() => {
+    const anyEnabled = tunnelEnabled || tsEnabled;
+    if (!anyEnabled) return;
+    const tunnelHealthy = !tunnelEnabled || tunnelReachable;
+    const tsHealthy = !tsEnabled || tsReachable;
+    const allHealthy = tunnelHealthy && tsHealthy;
+    const onVisible = () => { if (!document.hidden) syncTunnelStatus(); };
+    document.addEventListener("visibilitychange", onVisible);
+    if (allHealthy) return () => document.removeEventListener("visibilitychange", onVisible);
+    const timer = setInterval(() => { if (!document.hidden) syncTunnelStatus(); }, STATUS_POLL_FAST_MS);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [tunnelEnabled, tsEnabled, tunnelReachable, tsReachable]);
+
   const handleTunnelDashboardAccess = async (value) => {
     try {
       const res = await fetch("/api/settings", {
@@ -281,6 +272,13 @@ export default function APIPageClient({ machineId }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      fetchData();
+      loadSettings();
+    });
+  }, []);
 
   // u2500u2500u2500 Cloudflare Tunnel handlers
   // Ping tunnel health until reachable. Race multiple URLs (shortlink + direct) — 1 OK is enough.
@@ -696,14 +694,7 @@ export default function APIPageClient({ machineId }) {
     });
   };
 
-  const [baseUrl, setBaseUrl] = useState("/v1");
-
-  // Hydration fix: Only access window on client side
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setBaseUrl(`${window.location.origin}/v1`);
-    }
-  }, []);
+  const [baseUrl] = useState(() => typeof window !== "undefined" ? `${window.location.origin}/v1` : "/v1");
 
   if (loading) {
     return (
@@ -1046,6 +1037,15 @@ export default function APIPageClient({ machineId }) {
                       <span className="material-symbols-outlined text-[14px]">history</span>
                       Zuletzt genutzt: {key.lastUsed ? new Date(key.lastUsed).toLocaleString() : "Noch nie"}
                     </span>
+                    {key.lastUsedIp && (
+                      <>
+                        <span className="text-border">•</span>
+                        <span className="flex items-center gap-1 font-mono" title={key.lastUsedAt ? `Recorded ${new Date(key.lastUsedAt).toLocaleString()}` : "Last source IP"}>
+                          <span className="material-symbols-outlined text-[14px]">lan</span>
+                          Last IP: {key.lastUsedIp}
+                        </span>
+                      </>
+                    )}
                     <span className="text-border">•</span>
                     <span className="flex items-center gap-1">
                       <span className="material-symbols-outlined text-[14px]">today</span>

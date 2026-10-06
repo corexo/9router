@@ -54,5 +54,5 @@ export async function deleteUser(id) {
 
 export async function setPasswordHash(id, hash) {
   const db = await getAdapter();
-  return (db.run("UPDATE users SET passwordHash = ? WHERE id = ?", [hash, id])?.changes ?? 0) > 0;
+  return (db.run("UPDATE users SET passwordHash = ?, mustChangePassword = 0 WHERE id = ?", [hash, id])?.changes ?? 0) > 0;
 }

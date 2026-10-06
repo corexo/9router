@@ -23,6 +23,7 @@ vi.mock("@/lib/auth/dashboardSession", () => ({
 vi.mock("@/dashboardGuard", async (importOriginal) => ({ ...await importOriginal(), isLocalRequest: mocks.isLocalRequest }));
 vi.mock("@/lib/auth/oidc", () => ({ isOidcConfigured: () => false }));
 vi.mock("@/lib/auth/saml", () => ({ isSamlConfigured: () => false }));
+vi.mock("@/lib/db/repos/authAuditRepo.js", () => ({ recordLoginAttempt: vi.fn(), listLoginAudit: vi.fn() }));
 vi.mock("@/shared/utils/machineId", () => ({ getConsistentMachineId: async () => "cli" }));
 vi.mock("@/lib/auth/trustedPeer", () => ({ hasTrustedPeerHeaders: () => false }));
 
@@ -59,6 +60,19 @@ describe("multi-user login", () => {
     expect(res.status).toBe(200);
     expect(mocks.setDashboardAuthCookie).toHaveBeenCalledWith(expect.anything(), expect.anything(),
       { sub: "id-1", username: "Oguz", role: "moderator" });
+  });
+  it("forces password rotation for seeded default-password users", async () => {
+    mocks.verifyLogin.mockResolvedValue({ id: "id-1", username: "Oguz", role: "admin", mustChangePassword: 1 });
+    const res = await POST(request("/api/auth/login", "POST", { username: "Oguz", password: "123456" }));
+    expect(res.status).toBe(200);
+    expect(res.body.mustChangePassword).toBe(true);
+    expect(mocks.setDashboardAuthCookie).toHaveBeenCalled();
+  });
+  it("gates forced-rotation users to password change until completed", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue({ sub: "id-1", username: "Oguz", role: "admin" });
+    mocks.getUserByUsername.mockResolvedValue({ id: "id-1", username: "Oguz", role: "admin", isActive: 1, mustChangePassword: 1 });
+    expect((await proxy(request("/api/settings", "GET"))).status).toBe(403);
+    expect((await proxy(request("/api/auth/change-password", "POST"))).status).toBe(200);
   });
   it("rejects a wrong password", async () => {
     mocks.verifyLogin.mockResolvedValue(null);

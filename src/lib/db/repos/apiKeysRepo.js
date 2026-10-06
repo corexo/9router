@@ -12,6 +12,8 @@ function rowToKey(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt || today,
     ownerUsername: row.ownerUsername || null,
+    lastUsedIp: row.lastUsedIp || null,
+    lastUsedAt: row.lastUsedAt || null,
     lastUsed: row.lastUsed || null,
     requestsToday: Number(row.requestsToday || 0),
     totalRequests: Number(row.totalRequests || 0),
@@ -25,7 +27,7 @@ export async function getApiKeys() {
   const db = await getAdapter();
   const rows = db.all(`
     SELECT 
-      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.lastUsedIp, k.lastUsedAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
       COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,
@@ -55,7 +57,7 @@ export async function getApiKeyById(id) {
   const db = await getAdapter();
   const row = db.get(`
     SELECT 
-      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.lastUsedIp, k.lastUsedAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
       COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,
@@ -124,10 +126,16 @@ export async function deleteApiKey(id) {
   return (res?.changes ?? 0) > 0;
 }
 
-export async function validateApiKeyDetails(key) {
+export async function validateApiKeyDetails(key, sourceIp = null) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
   if (!row || !(row.isActive === 1 || row.isActive === true)) return null;
+  if (sourceIp) {
+    const lastUsedAt = new Date().toISOString();
+    db.run("UPDATE apiKeys SET lastUsedIp = ?, lastUsedAt = ? WHERE id = ?", [sourceIp, lastUsedAt, row.id]);
+    row.lastUsedIp = sourceIp;
+    row.lastUsedAt = lastUsedAt;
+  }
   return rowToKey(row);
 }
 

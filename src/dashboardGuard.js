@@ -175,6 +175,7 @@ async function hasValidToken(request) {
     if (!claims.sub || !claims.username || !claims.role) return false;
     const user = await getUserByUsername(claims.username);
     if (!user || user.id !== claims.sub || !user.isActive || user.role !== claims.role) return false;
+    claims.mustChangePassword = Boolean(user.mustChangePassword);
   }
   return claims;
 }
@@ -188,7 +189,7 @@ export function isModeratorWrite(request, claims) {
     path === "/api/auth/change-password" ||
     path === "/api/auth/logout" ||
     path === "/api/settings/user" ||
-    path === "/api/settings" ||
+    (path === "/api/settings" && request.method === "PATCH") ||
     path.startsWith("/api/oauth/") ||
     path === "/api/providers" ||
     path.startsWith("/api/providers/")
@@ -263,6 +264,9 @@ export async function proxy(request) {
       return NextResponse.next();
     }
     const claims = await hasValidToken(request);
+    if (claims?.mustChangePassword && !["/api/auth/status", "/api/auth/logout", "/api/auth/change-password"].includes(pathname)) {
+      return NextResponse.json({ error: "Password change required" }, { status: 403 });
+    }
     if (isModeratorWrite(request, claims))
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     if (await hasValidCliToken(request) || claims || await isAuthenticated(request))
@@ -301,7 +305,11 @@ export async function proxy(request) {
     // Verify JWT token
     const token = request.cookies.get("auth_token")?.value;
     if (token) {
-      if (await hasValidToken(request)) {
+      const claims = await hasValidToken(request);
+      if (claims?.mustChangePassword) {
+        return NextResponse.redirect(new URL("/login?forcePasswordChange=1", request.url));
+      }
+      if (claims) {
         return NextResponse.next();
       } else {
         return NextResponse.redirect(new URL("/login", request.url));

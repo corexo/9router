@@ -26,10 +26,12 @@ export default function ProfilePage() {
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
+  const [hasUsers, setHasUsers] = useState(false);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
   const [passLoading, setPassLoading] = useState(false);
+  const [loginAudit, setLoginAudit] = useState([]);
   const [dbLoading, setDbLoading] = useState(false);
   const [dbStatus, setDbStatus] = useState({ type: "", message: "" });
   const [dbAuth, setDbAuth] = useState({ open: false, mode: "", password: "" });
@@ -90,10 +92,15 @@ export default function ProfilePage() {
   const [jevStatus, setJevStatus] = useState({ type: "", message: "" });
   const [jevLoading, setJevLoading] = useState(false);
 
-  const [isRemoteHost, setIsRemoteHost] = useState(false);
+  const [isRemoteHost] = useState(() => typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
+
   useEffect(() => {
-    if (typeof window !== "undefined")
-      setIsRemoteHost(!["localhost", "127.0.0.1", "::1"].includes(window.location.hostname));
+    fetch("/api/auth/status").then((res) => res.ok ? res.json() : null).then((data) => {
+      if (data) setHasUsers(data.hasUsers === true);
+    }).catch(() => {});
+    fetch("/api/auth/audit").then((res) => res.ok ? res.json() : null).then((data) => {
+      if (data?.entries) setLoginAudit(data.entries);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -273,6 +280,10 @@ export default function ProfilePage() {
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
+    if (passwords.new.length < 12) {
+      setPassStatus({ type: "error", message: "Password must be at least 12 characters" });
+      return;
+    }
     if (passwords.new !== passwords.confirm) {
       setPassStatus({ type: "error", message: "Passwords do not match" });
       return;
@@ -282,11 +293,11 @@ export default function ProfilePage() {
     setPassStatus({ type: "", message: "" });
 
     try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          currentPassword: passwords.current,
+          oldPassword: passwords.current,
           newPassword: passwords.new,
         }),
       });
@@ -927,7 +938,7 @@ export default function ProfilePage() {
             </div>
             {settings.requireLogin === true && (
               <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
-                {settings.hasPassword && (
+                {(settings.hasPassword || hasUsers) && (
                   <div className="flex flex-col gap-2">
                     <label className="text-xs sm:text-sm font-medium">Current Password</label>
                     <Input
@@ -982,6 +993,21 @@ export default function ProfilePage() {
                 </div>
               </form>
             )}
+          </div>
+          <div className="mt-5 pt-4 border-t border-border/50">
+            <h4 className="text-sm font-semibold mb-2">Recent login IPs</h4>
+            {loginAudit.length ? (
+              <div className="space-y-1.5 max-h-48 overflow-auto">
+                {loginAudit.slice(0, 20).map((entry, index) => (
+                  <div key={`${entry.createdAt}-${index}`} className="flex items-center justify-between gap-3 text-xs">
+                    {entry.username && <span className="text-text-muted">{entry.username}</span>}
+                    <span className="font-mono text-text-main">{entry.sourceIp}</span>
+                    <span className={entry.success ? "text-emerald-600" : "text-rose-600"}>{entry.success ? "Success" : "Failed"}</span>
+                    <span className="text-text-muted">{new Date(entry.createdAt).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-xs text-text-muted">No login records yet.</p>}
           </div>
         </Card>
 
@@ -1703,9 +1729,9 @@ export default function ProfilePage() {
             </div>
             <div className="flex items-center justify-between p-3 rounded-lg bg-surface-2/40 border border-border/60">
               <div className="flex flex-col gap-0.5 pr-4">
-                <span className="font-medium text-sm text-text-main">Lokale Modelle ('local-first') ausschließen</span>
+                <span className="font-medium text-sm text-text-main">Lokale Modelle (&apos;local-first&apos;) ausschließen</span>
                 <span className="text-xs text-text-muted">
-                  Modelle aus der 'local-first'-Combo werden nicht von Jev gewählt und fließen nicht in die Modellauswahl ein.
+                  Modelle aus der &apos;local-first&apos;-Combo werden nicht von Jev gewählt und fließen nicht in die Modellauswahl ein.
                 </span>
               </div>
               <Toggle

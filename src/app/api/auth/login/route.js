@@ -7,9 +7,15 @@ import { isOidcConfigured } from "@/lib/auth/oidc";
 import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { checkLock, recordFail, recordSuccess, getClientIp } from "@/lib/auth/loginLimiter";
 import { isLocalRequest } from "@/dashboardGuard";
+import { recordLoginAttempt } from "@/lib/db/repos/authAuditRepo.js";
 
 const RESET_HINT = "Forgot password? Reset to default via 9Router CLI → Settings → Reset Password to Default.";
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
+async function auditLogin(entry) {
+  try { await recordLoginAttempt(entry); }
+  catch (error) { console.error("[auth] failed to persist login audit:", error.message); }
+}
 
 function isTunnelRequest(request, settings) {
   const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
@@ -64,6 +70,7 @@ export async function POST(request) {
 
     if (isValid) {
       recordSuccess(ip);
+      await auditLogin({ username: user?.username || username || null, sourceIp: ip, success: true, userAgent: request.headers.get("user-agent") });
 
       // Default password still in use on a remote client → force a password
       // change before the dashboard is exposed remotely (keeps local UX intact).
@@ -93,9 +100,10 @@ export async function POST(request) {
       const cookieStore = await cookies();
       await setDashboardAuthCookie(cookieStore, request, user ? { sub: user.id, username: user.username, role: user.role } : {});
 
-      return NextResponse.json({ success: true, mustChangePassword: false }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json({ success: true, mustChangePassword: Boolean(user?.mustChangePassword) }, { headers: NO_STORE_HEADERS });
     }
 
+    await auditLogin({ username: typeof username === "string" ? username.slice(0, 128) : null, sourceIp: ip, success: false, userAgent: request.headers.get("user-agent") });
     const { remainingBeforeLock } = recordFail(ip);
     const postLock = checkLock(ip);
     if (postLock.locked) {

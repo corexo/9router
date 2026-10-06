@@ -42,7 +42,9 @@ export default function LoginPage() {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.authenticated === true || data.requireLogin === false) {
+          if (data.authenticated === true && data.mustChangePassword) {
+            setMustChange(true);
+          } else if (data.authenticated === true || data.requireLogin === false) {
             window.location.assign("/dashboard");
             return;
           }
@@ -105,10 +107,10 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword: password, newPassword }),
+        body: JSON.stringify({ oldPassword: password, newPassword }),
       });
       if (res.ok) {
         window.location.assign("/dashboard");
@@ -172,21 +174,32 @@ export default function LoginPage() {
           {mustChange ? (
             <form onSubmit={handleSetNewPassword} className="flex flex-col gap-4">
               <p className="text-sm text-amber-600 dark:text-amber-400 text-center">
-                Set a new password before accessing the dashboard remotely.
+                Set a new password (at least 12 characters) before accessing the dashboard.
               </p>
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">Current password</label>
+                <Input
+                  type="password"
+                  placeholder="Enter current password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium">New password</label>
                 <Input
                   type="password"
-                  placeholder="Enter new password"
+                  placeholder="At least 12 characters"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
-                  autoFocus
+                  minLength={12}
                 />
                 {error && <p className="text-xs text-red-500">{error}</p>}
               </div>
-              <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!newPassword}>
+              <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!password || newPassword.length < 12}>
                 Set password
               </Button>
             </form>
