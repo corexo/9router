@@ -7,6 +7,7 @@
 #                                        deploys to QNAP, runs live verification.
 #   ./scripts/deploy-qnap.sh --rollback  Instantly rolls back to the previous image.
 #   ./scripts/deploy-qnap.sh --status    Shows health and running image info.
+#   ./scripts/deploy-qnap.sh --skip-e2e Deploys without the live chat test.
 # ==============================================================================
 
 set -euo pipefail
@@ -48,8 +49,8 @@ check_health() {
 
   for ((i=1; i<=attempts; i++)); do
     local res
-    res=$(curl -s --max-time 3 "$url" || true)
-    if [[ "$res" == *"\"ok\":true"* ]]; then
+    res=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || true)
+    if [[ "$res" == 200 ]]; then
       return 0
     fi
     sleep "$delay"
@@ -74,7 +75,9 @@ verify_completion() {
   if [[ "$res" == *"choices"* || "$res" == *"pong"* ]]; then
     return 0
   fi
-  echo "$res"
+  local error
+  error=$(printf '%s' "$res" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{const e=JSON.parse(s).error;console.log(String(e?.message ?? e ?? "unknown error").slice(0,80))}catch{console.log("invalid response")}})')
+  log_warn "E2E error: $error"
   return 1
 }
 
@@ -103,36 +106,26 @@ do_status() {
 # Action: Rollback
 # ------------------------------------------------------------------------------
 do_rollback() {
+  local prev_image="$1"
+  local current_image="${2:-}"
   echo -e "\n${BOLD}=== Initiating Rollback ===${NC}"
 
-  # Read current and previous image from QNAP state
-  local state
-  state=$(run_remote "cat '$REMOTE_STATE_FILE' 2>/dev/null || true")
-
-  local prev_image=""
-  local current_image=""
-  if [[ -n "$state" ]]; then
-    prev_image=$(echo "$state" | grep '^PREVIOUS_IMAGE=' | cut -d'=' -f2- || true)
-    current_image=$(echo "$state" | grep '^CURRENT_IMAGE=' | cut -d'=' -f2- || true)
-  fi
-
-  # Fallback to known stable rescue image if no state file exists
-  if [[ -z "$prev_image" ]]; then
-    prev_image="9router-qnap-test:rescue-1348de3c"
-    log_warn "No previous image recorded in state file. Falling back to default: $prev_image"
+  if [[ -z "$prev_image" ]] || ! run_remote "$DOCKER_BIN image inspect '$prev_image' >/dev/null 2>&1"; then
+    log_err "Rollback image missing on QNAP: $prev_image"
+    exit 1
   fi
 
   log_info "Target rollback image: ${BOLD}${prev_image}${NC}"
 
   log_info "Stopping and replacing container..."
   run_remote "
-    $DOCKER_BIN stop $CONTAINER_NAME >/dev/null 2>&1 || true
-    $DOCKER_BIN rm $CONTAINER_NAME >/dev/null 2>&1 || true
+    $DOCKER_BIN stop $CONTAINER_NAME >/dev/null 2>&1 || echo 'WARN: stop failed' >&2
+    $DOCKER_BIN rm $CONTAINER_NAME >/dev/null 2>&1 || echo 'WARN: rm failed' >&2
     $DOCKER_BIN run -d --name $CONTAINER_NAME --restart always \
       -p ${HOST_PORT}:${INTERNAL_PORT} \
       -v ${REMOTE_DATA_DIR}:/app/data \
-      ${prev_image} >/dev/null
-  "
+      '${prev_image}' >/dev/null
+  " || { log_err "SERVICE DOWN, manual intervention required: rollback docker run failed"; exit 1; }
 
   log_info "Verifying health after rollback..."
   if check_health; then
@@ -164,7 +157,8 @@ do_deploy() {
   # 1. Fetch current image on QNAP before modifying anything
   log_info "Checking current running container on QNAP..."
   local current_running_image
-  current_running_image=$(run_remote "$DOCKER_BIN inspect --format '{{.Config.Image}}' $CONTAINER_NAME 2>/dev/null || echo '9router-qnap-test:latest'")
+  current_running_image=$(run_remote "$DOCKER_BIN inspect --format '{{.Config.Image}}' $CONTAINER_NAME") || { log_err "Cannot inspect current container; aborting."; exit 1; }
+  [[ -n "$current_running_image" ]] || { log_err "Current container has no image; aborting."; exit 1; }
   log_info "Current running image: ${BOLD}${current_running_image}${NC}"
 
   # 2. Local Docker Build
@@ -176,9 +170,15 @@ do_deploy() {
   log_ok "Docker build succeeded."
 
   # 3. Local Smoke Test (Run temporary container on high port)
-  local smoke_port="20999"
+  local smoke_port=""
+  local candidate
+  for candidate in 20999 21000 21001 21002 21003; do
+    if ! ss -ltn "( sport = :$candidate )" | grep -q LISTEN; then smoke_port="$candidate"; break; fi
+  done
+  [[ -n "$smoke_port" ]] || { log_err "No free smoke-test port"; exit 1; }
+  local smoke_cid=""
+  trap 'if [[ -n "$smoke_cid" ]]; then docker rm -f "$smoke_cid" >/dev/null 2>&1 || true; fi' EXIT INT TERM
   log_info "Running local smoke test on container..."
-  local smoke_cid
   smoke_cid=$(docker run -d --rm -p "${smoke_port}:20128" -e NODE_ENV=production "${image_tag}")
   
   local smoke_passed=0
@@ -191,7 +191,8 @@ do_deploy() {
     fi
     sleep 1
   done
-  docker stop "$smoke_cid" >/dev/null 2>&1 || true
+  docker rm -f "$smoke_cid" >/dev/null 2>&1 || true
+  smoke_cid=""
 
   if [[ "$smoke_passed" -ne 1 ]]; then
     log_err "Local smoke test FAILED (health check did not return ok). Aborting deployment!"
@@ -207,45 +208,57 @@ do_deploy() {
   "
   log_ok "Image successfully loaded into QNAP Docker daemon."
 
-  # 5. Remote Database Backup before container switch
+  # 5. Stop container, then back up SQLite and its WAL companions
+  log_info "Checking image and stopping container for database backup..."
+  run_remote "$DOCKER_BIN image inspect '$image_tag' >/dev/null 2>&1" || { log_err "Target image missing on QNAP; aborting."; exit 1; }
+  run_remote "$DOCKER_BIN stop $CONTAINER_NAME >/dev/null" || { log_err "Cannot stop container safely for backup; aborting."; exit 1; }
   log_info "Creating database backup on QNAP..."
   run_remote "
     mkdir -p '$REMOTE_BACKUP_DIR'
     if [ -f '${REMOTE_DATA_DIR}/db/data.sqlite' ]; then
-      cp '${REMOTE_DATA_DIR}/db/data.sqlite' '${REMOTE_BACKUP_DIR}/data.sqlite.backup-\$(date +%Y%m%d-%H%M%S)'
-      # Keep last 10 backups
-      cd '$REMOTE_BACKUP_DIR' && ls -t data.sqlite.backup-* 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+      backup='${REMOTE_BACKUP_DIR}/backup-'\$(date +%Y%m%d-%H%M%S)
+      mkdir -p \"\$backup\"
+      for file in data.sqlite data.sqlite-wal data.sqlite-shm; do
+        if [ -f '${REMOTE_DATA_DIR}/db/'\"\$file\" ]; then cp '${REMOTE_DATA_DIR}/db/'\"\$file\" \"\$backup/\" || exit 1; fi
+      done
+      mkdir -p /share/external/DEV3304_1/9router-backups/\"\$(basename \"\$backup\")\" && cp -f \"\$backup\"/* /share/external/DEV3304_1/9router-backups/\"\$(basename \"\$backup\")\"/ || echo 'WARN: external backup copy failed' >&2
+      cd '$REMOTE_BACKUP_DIR' && ls -dt backup-* 2>/dev/null | tail -n +11 | xargs -r rm -rf || true
+    else
+      echo 'Database file missing' >&2
+      exit 1
     fi
-  "
+  " || { log_err "Database backup failed; restarting previous image."; do_rollback "$current_running_image" "$image_tag"; exit 1; }
   log_ok "Database backed up successfully."
 
   # 6. Switch Container
   log_info "Switching container to ${image_tag}..."
   run_remote "
-    $DOCKER_BIN stop $CONTAINER_NAME >/dev/null 2>&1 || true
-    $DOCKER_BIN rm $CONTAINER_NAME >/dev/null 2>&1 || true
+    $DOCKER_BIN stop $CONTAINER_NAME >/dev/null 2>&1 || echo 'WARN: stop failed' >&2
+    $DOCKER_BIN rm $CONTAINER_NAME >/dev/null 2>&1 || echo 'WARN: rm failed' >&2
     $DOCKER_BIN run -d --name $CONTAINER_NAME --restart always \
       -p ${HOST_PORT}:${INTERNAL_PORT} \
       -v ${REMOTE_DATA_DIR}:/app/data \
-      ${image_tag} >/dev/null
-  "
+      '${image_tag}' >/dev/null
+  " || { log_err "New image docker run failed; rolling back."; do_rollback "$current_running_image" "$image_tag"; exit 1; }
 
   # 7. Post-deployment Health Check
   log_info "Verifying health of new deployment..."
-  if ! check_health; then
+  if ! check_health || [[ "$(run_remote "$DOCKER_BIN inspect --format '{{.Config.Image}}' $CONTAINER_NAME" 2>/dev/null || true)" != "$image_tag" ]]; then
     log_err "HEALTH CHECK FAILED on newly deployed container!"
     log_warn "Triggering AUTOMATIC ROLLBACK to ${current_running_image}..."
-    do_rollback
+    do_rollback "$current_running_image" "$image_tag"
     exit 1
   fi
   log_ok "Health check PASSED: http://${QNAP_IP}:${HOST_PORT}/api/health returned 200 OK."
 
   # 8. Post-deployment Verification Test (LLM chat completion)
-  log_info "Running live end-to-end routing check (cx/gpt-6-sol)..."
-  if verify_completion; then
-    log_ok "Live chat completion PASSED."
-  else
-    log_warn "Live completion did not respond immediately, but health endpoint is UP."
+  if [[ "${1:-}" != "--skip-e2e" ]]; then
+    log_info "Running live end-to-end routing check (cx/gpt-6-sol)..."
+    if verify_completion; then
+      log_ok "Live chat completion PASSED."
+    else
+      log_warn "Live completion did not respond immediately, but health endpoint is UP."
+    fi
   fi
 
   # 9. Record State File on QNAP
@@ -264,15 +277,22 @@ do_deploy() {
 # ------------------------------------------------------------------------------
 case "${1:-}" in
   --rollback)
-    do_rollback
+    state=$(run_remote "cat '$REMOTE_STATE_FILE'") || { log_err "Cannot read rollback state"; exit 1; }
+    previous=$(printf '%s\n' "$state" | grep '^PREVIOUS_IMAGE=' | cut -d= -f2- || true)
+    current=$(printf '%s\n' "$state" | grep '^CURRENT_IMAGE=' | cut -d= -f2- || true)
+    do_rollback "$previous" "$current"
     ;;
   --status)
     do_status
     ;;
   --help|-h)
-    echo "Usage: $0 [--rollback | --status]"
+    echo "Usage: $0 [--rollback | --status | --skip-e2e]"
+    ;;
+  --skip-e2e|"")
+    do_deploy "${1:-}"
     ;;
   *)
-    do_deploy
+    echo "Usage: $0 [--rollback | --status | --skip-e2e]" >&2
+    exit 2
     ;;
 esac
