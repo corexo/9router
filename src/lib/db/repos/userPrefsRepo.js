@@ -1,7 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
-const ALLOWED = new Set(["theme", "locale", "dashboardLayout"]);
+const ALLOWED = new Set(["theme", "locale", "dashboardLayout", "jevPoolModels", "jevFreePoolModels", "jevTierPreference", "jevTierDistributionEnabled", "jevModelTiers", "jevExcludeLocalModels", "jev1mMinContext"]);
 export async function getUserPrefs(username) {
   const row = (await getAdapter()).get("SELECT data FROM userPrefs WHERE username = ?", [username]);
   return row ? parseJson(row.data, {}) : {};

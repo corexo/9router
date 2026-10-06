@@ -4,6 +4,9 @@ import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { normalizeTierPreference } from "@/sse/services/modelTiers.js";
 import bcrypt from "bcryptjs";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getUserPrefs, updateUserPrefs } from "@/lib/db/repos/userPrefsRepo";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -18,6 +21,14 @@ const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
 export async function GET() {
   try {
     const settings = await getSettings();
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    if (claims?.role === "moderator" && claims.username) {
+      const { password, oidcClientSecret, ...safeSettings } = settings;
+      const prefs = await getUserPrefs(claims.username);
+      Object.assign(safeSettings, Object.fromEntries(Object.entries(prefs).filter(([key]) => key.startsWith("jev"))));
+      safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
+      return NextResponse.json({ ...safeSettings, enableRequestLogs: false, enableTranslator: false, hasPassword: true }, { headers: SETTINGS_RESPONSE_HEADERS });
+    }
     const { password, oidcClientSecret, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     
@@ -39,6 +50,12 @@ export async function GET() {
 export async function PATCH(request) {
   try {
     const body = await request.json();
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    if (claims?.role === "moderator" && claims.username) {
+      const prefKeys = Object.keys(body).filter((key) => key.startsWith("jev") && key !== "jevApiKey");
+      const prefs = await updateUserPrefs(claims.username, Object.fromEntries(prefKeys.map((key) => [key, body[key]])));
+      return NextResponse.json({ success: true, userPreferences: prefs }, { headers: SETTINGS_RESPONSE_HEADERS });
+    }
 
     // Strip protected secrets before any internal handling sets them
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];

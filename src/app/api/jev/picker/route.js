@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { getSettings, getCombos, getProviderConnections } from "@/lib/localDb";
 import { getUnavailableModelIds, getModelHealth } from "@/lib/modelHealth";
@@ -36,15 +39,22 @@ export async function GET(request) {
     const estimatedTokens = Math.max(0, Number(searchParams.get("tokens")) || 0);
     const needsVision = searchParams.get("vision") === "true";
     const bigContext = searchParams.get("bigContext") === "true";
-    const [settings, combos, allModels, unavailable, health, connections, usage] = await Promise.all([
-      getSettings(), getCombos(), buildModelsList(["llm"], { skipDynamicFetch: true }), getUnavailableModelIds(), getModelHealth(), getProviderConnections(), getUsageStats("24h"),
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const [globalSettings, allCombos, unavailable, health, allConnections, usage] = await Promise.all([
+      getSettings(), getCombos(), getUnavailableModelIds(), getModelHealth(), getProviderConnections(), getUsageStats("24h"),
     ]);
+    const tenant = claims?.role === "moderator" && claims.username ? claims.username : null;
+    const settings = tenant ? { ...globalSettings, ...Object.fromEntries(Object.entries(await getUserPrefs(tenant)).filter(([key]) => key.startsWith("jev"))) } : globalSettings;
+    const allModels = await buildModelsList(["llm"], { skipDynamicFetch: true, ownerUsername: tenant });
+    const connections = tenant ? allConnections.filter((connection) => connection.ownerUsername === tenant) : allConnections;
+    const combos = tenant ? allCombos.filter((combo) => combo.ownerUsername === tenant) : allCombos;
+    const scopedModels = allModels;
     const localCombo = combos.find((item) => item.name === "local-first");
-    const activeIds = new Set(allModels
+    const activeIds = new Set(scopedModels
       .filter((item) => item.owned_by !== "combo" && item.owned_by !== "9router" && typeof item.id === "string" && item.id.includes("/"))
       .map((item) => item.id));
     const configuredPool = Array.isArray(settings.jevPoolModels) ? settings.jevPoolModels : [];
-    const basePool = [...new Set([...activeIds, ...configuredPool])].filter((id) => typeof id === "string" && id.includes("/") && !["jev", "jev-1m", "jev-free"].includes(id.split("/").at(-1)));
+    const basePool = [...new Set(tenant ? [...activeIds, ...configuredPool.filter((id) => activeIds.has(id))] : [...activeIds, ...configuredPool])].filter((id) => typeof id === "string" && id.includes("/") && !["jev", "jev-1m", "jev-free"].includes(id.split("/").at(-1)));
     const localModels = new Set((localCombo?.models || []).map((item) => String(item).toLowerCase()));
     const unavailableCanonical = new Set([...unavailable].map((id) => {
       const slash = id.indexOf("/");

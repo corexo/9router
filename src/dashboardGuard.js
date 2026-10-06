@@ -188,6 +188,7 @@ export function isModeratorWrite(request, claims) {
     path === "/api/auth/change-password" ||
     path === "/api/auth/logout" ||
     path === "/api/settings/user" ||
+    path === "/api/settings" ||
     path.startsWith("/api/oauth/") ||
     path === "/api/providers" ||
     path.startsWith("/api/providers/")
