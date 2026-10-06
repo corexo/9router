@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// userPrefs whitelist: only theme, locale, dashboardLayout persist; anything
+// userPrefs whitelist: only UI, Jev, and token-saver preferences persist; anything
 // else is dropped silently (never rejected — dashboard must not break).
 
 const rows = new Map();
@@ -21,6 +21,11 @@ describe("userPrefs whitelist", () => {
     await updateUserPrefs("alice", { theme: "dark", locale: "de", dashboardLayout: { cols: 2 } });
     const prefs = await getUserPrefs("alice");
     expect(prefs).toEqual({ theme: "dark", locale: "de", dashboardLayout: { cols: 2 } });
+  });
+
+  it("stores per-user token-saver settings", async () => {
+    await updateUserPrefs("alice", { rtkEnabled: false, headroomEnabled: true, cavemanEnabled: true, ponytailLevel: "lite" });
+    expect(await getUserPrefs("alice")).toMatchObject({ rtkEnabled: false, headroomEnabled: true, cavemanEnabled: true, ponytailLevel: "lite" });
   });
 
   it("drops non-whitelisted keys", async () => {

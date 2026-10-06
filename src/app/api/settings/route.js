@@ -53,7 +53,7 @@ export async function PATCH(request) {
     const body = await request.json();
     const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     if (claims?.role === "moderator" && claims.username) {
-      const prefKeys = Object.keys(body).filter((key) => key.startsWith("jev") && key !== "jevApiKey");
+      const prefKeys = Object.keys(body).filter((key) => key !== "jevApiKey" && !["password", "newPassword", "currentPassword", "oidcClientSecret"].includes(key));
       const prefs = await updateUserPrefs(claims.username, Object.fromEntries(prefKeys.map((key) => [key, body[key]])));
       return NextResponse.json({ success: true, userPreferences: prefs }, { headers: SETTINGS_RESPONSE_HEADERS });
     }

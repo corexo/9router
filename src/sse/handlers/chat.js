@@ -8,6 +8,7 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
+import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -511,7 +512,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       if (healthyComboModels.length === 0) {
         return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No healthy models in combo: ${modelStr}`);
       }
-      const chatSettings = await getSettings();
+      let chatSettings = await getSettings();
+      if (apiKey) {
+        const keyDetails = await validateApiKeyDetails(apiKey);
+        if (keyDetails?.ownerUsername) {
+          const userPrefs = await getUserPrefs(keyDetails.ownerUsername);
+          chatSettings = { ...chatSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("jev"))) };
+        }
+      }
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -620,7 +628,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     // Use shared chatCore
-    const chatSettings = await getSettings();
+    let chatSettings = await getSettings();
+    if (apiKeyDetails?.ownerUsername) {
+      const userPrefs = await getUserPrefs(apiKeyDetails.ownerUsername);
+      chatSettings = { ...chatSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("rtk") || key.startsWith("headroom") || key.startsWith("caveman") || key.startsWith("ponytail") || key.startsWith("pxpipe") || key.startsWith("jev"))) };
+    }
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
