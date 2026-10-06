@@ -113,20 +113,6 @@ function pruneExpired(sessions) {
   }
 }
 
-function validPiProjectPath(path) {
-  return typeof path === "string" && path.length > 0 && path.length <= 1024 && !/[\x00-\x1f\x7f]/.test(path) ? path : null;
-}
-
-/** Update display metadata without adding a request or changing activity timestamps. */
-export function setSessionProjectPath(sessionKey, path) {
-  const displayPath = validPiProjectPath(path);
-  if (!sessionKey || !displayPath) return;
-  const entry = store().get(sessionKey);
-  if (!entry || isExpired(entry) || entry.piProjectPath === displayPath) return;
-  entry.piProjectPath = displayPath;
-  persistEntry(sessionKey, entry);
-}
-
 function createEntry() {
   return {
     id: randomBytes(8).toString("hex"),
@@ -134,7 +120,6 @@ function createEntry() {
     models: [],
     providers: [],
     connectionId: null,
-    piProjectPath: null,
     cachedTokens: 0,
     promptTokens: 0,
     cacheCapableSeen: false,
@@ -156,7 +141,7 @@ function createEntry() {
  * no usable session key). Numbers <= 0 are ignored so callers can pass rough
  * or missing estimates safely.
  */
-export function touchSessionCache(sessionKey, { model, provider, connectionId, piProjectPath, cachedTokens, promptTokens, cacheActive, latencyMs, completionTokens, probePrefix } = {}) {
+export function touchSessionCache(sessionKey, { model, provider, connectionId, cachedTokens, promptTokens, cacheActive, latencyMs, completionTokens, probePrefix } = {}) {
   if (!sessionKey) return null;
   const sessions = store();
   let entry = sessions.get(sessionKey);
@@ -183,9 +168,6 @@ export function touchSessionCache(sessionKey, { model, provider, connectionId, p
   if (Number(promptTokens) > 0) entry.promptTokens += Number(promptTokens);
   if (cacheActive) entry.cacheFlagged = true;
   if (connectionId) entry.connectionId = connectionId;
-  // Display-only: never feed this path into session identity, routing or cache keys.
-  const displayPath = validPiProjectPath(piProjectPath);
-  if (displayPath) entry.piProjectPath = displayPath;
   if (probePrefix && Array.isArray(probePrefix.messages) && probePrefix.messages.length > 0) {
     entry.probePrefix = probePrefix;
   }
@@ -298,7 +280,6 @@ function toPublicEntry(entry, includeTurns = false) {
     models: [...entry.models],
     providers: [...entry.providers],
     connectionId: entry.connectionId || null,
-    piProjectPath: entry.piProjectPath || null,
     cachedTokens: entry.cachedTokens,
     promptTokens: entry.promptTokens,
     requests: entry.requests,
@@ -511,7 +492,7 @@ export function getKeepAliveCandidates({
   maxIdleMs = 285_000, // 4m 45s (before 5m TTL expires)
   maxSessionWindowMs = 45 * 60 * 1000, // Explicit sessions: 45m without user activity
   topSessionWindowMs = 2 * 60 * 60 * 1000, // Top sessions: 2h without user activity
-  topN = 3,
+  topN = 20,
   globalEnabled = true,
 } = {}) {
   if (!globalEnabled) return [];
@@ -519,8 +500,10 @@ export function getKeepAliveCandidates({
   pruneExpired(sessions);
   const now = Date.now();
 
-  // Find Top N active sessions
+  // Rank only sessions that can actually be probed; otherwise unusable entries
+  // consume the Top N slots and eligible sessions never get warmed.
   const activeEntries = [...sessions.entries()]
+    .filter(([_, entry]) => entry.probePrefix?.messages?.length > 0)
     .filter(([_, entry]) => now - (entry.lastUserActive ?? entry.createdAt) <= topSessionWindowMs)
     .sort((a, b) => (b[1].requests || 0) - (a[1].requests || 0));
 

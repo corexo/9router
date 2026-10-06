@@ -26,6 +26,7 @@ export function parseSSELine(line, format = null) {
 
   const data = line.slice(5).trim();
   if (data === "[DONE]") return { done: true };
+  if (data.startsWith("[9ROUTER_METADATA]")) return null;
 
   try {
     return JSON.parse(data);

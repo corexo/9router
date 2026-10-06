@@ -141,6 +141,12 @@ describe("applyThinking per provider format", () => {
     expect(out.enable_thinking).toBe(false);
     expect(out.thinking).toBeUndefined();
   });
+  it("GLM-5.3 off → minimum supported effort", () => {
+    const out = apply("openai", "glm-5.3-flash", { reasoning_effort: "none" }, "glm");
+    expect(out.thinking).toEqual({ type: "enabled" });
+    expect(out.reasoning_effort).toBe("low");
+    expect(out.enable_thinking).toBeUndefined();
+  });
   it.each([
     ["high", "high"],
     ["max", "max"],

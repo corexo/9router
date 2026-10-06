@@ -98,7 +98,10 @@ export async function PUT(request, { params }) {
       testStatus,
       lastError,
       lastErrorAt,
-      providerSpecificData
+      providerSpecificData,
+      throttlePercent,
+      weight,
+      dynamicBalanceEnabled,
     } = body;
 
     const existing = await getProviderConnectionById(id);
@@ -126,6 +129,17 @@ export async function PUT(request, { params }) {
     if (testStatus !== undefined) updateData.testStatus = testStatus;
     if (lastError !== undefined) updateData.lastError = lastError;
     if (lastErrorAt !== undefined) updateData.lastErrorAt = lastErrorAt;
+    if (throttlePercent !== undefined) {
+      const parsed = Math.max(0, Math.min(100, Math.round(Number(throttlePercent) || 0)));
+      updateData.throttlePercent = parsed;
+    }
+    if (weight !== undefined) {
+      const parsedWeight = Math.max(0, Math.min(100, Math.round(Number(weight) || 0)));
+      updateData.weight = parsedWeight;
+    }
+    if (dynamicBalanceEnabled !== undefined) {
+      updateData.dynamicBalanceEnabled = Boolean(dynamicBalanceEnabled);
+    }
 
     if (
       shouldMergeProviderSpecificData(

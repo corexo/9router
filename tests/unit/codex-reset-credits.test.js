@@ -32,6 +32,10 @@ vi.mock("open-sse/services/usage.js", () => ({
   consumeCodexRateLimitResetCredit: mocks.consumeCodexRateLimitResetCredit,
 }));
 
+vi.mock("@/sse/services/auth.js", () => ({
+  clearConnectionLocks: vi.fn(),
+}));
+
 describe("Codex reset credits", () => {
   beforeEach(() => {
     vi.resetModules();

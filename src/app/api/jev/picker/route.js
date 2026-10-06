@@ -41,10 +41,10 @@ export async function GET(request) {
     ]);
     const localCombo = combos.find((item) => item.name === "local-first");
     const activeIds = new Set(allModels
-      .filter((item) => item.owned_by !== "combo" && typeof item.id === "string" && item.id.includes("/"))
+      .filter((item) => item.owned_by !== "combo" && item.owned_by !== "9router" && typeof item.id === "string" && item.id.includes("/"))
       .map((item) => item.id));
     const configuredPool = Array.isArray(settings.jevPoolModels) ? settings.jevPoolModels : [];
-    const basePool = [...new Set([...activeIds, ...configuredPool])];
+    const basePool = [...new Set([...activeIds, ...configuredPool])].filter((id) => typeof id === "string" && id.includes("/") && !["jev", "jev-1m", "jev-free"].includes(id.split("/").at(-1)));
     const localModels = new Set((localCombo?.models || []).map((item) => String(item).toLowerCase()));
     const unavailableCanonical = new Set([...unavailable].map((id) => {
       const slash = id.indexOf("/");

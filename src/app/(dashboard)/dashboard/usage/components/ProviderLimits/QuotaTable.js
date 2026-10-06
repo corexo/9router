@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatResetTime, getRemainingPercentage } from "./utils";
+import { formatResetTime, getRemainingPercentage, computeResetTimeProgress } from "./utils";
 
 const PAGE_SIZE = 10;
 
@@ -109,24 +109,23 @@ export default function QuotaTable({
 
   const totalPages = Math.max(1, Math.ceil(sortedQuotas.length / PAGE_SIZE));
 
-  useEffect(() => {
+  const [prevDeps, setPrevDeps] = useState({ sortMode, quotas });
+  if (prevDeps.sortMode !== sortMode || prevDeps.quotas !== quotas) {
+    setPrevDeps({ sortMode, quotas });
     setPage(1);
-  }, [sortMode, quotas]);
-
-  useEffect(() => {
-    setPage((currentPage) => Math.min(currentPage, totalPages));
-  }, [totalPages]);
+  }
 
   if (!quotas || quotas.length === 0) {
     return null;
   }
 
+  const safePage = Math.min(page, totalPages);
   const currentPageRows = sortedQuotas.slice(
-    (page - 1) * PAGE_SIZE,
-    page * PAGE_SIZE,
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE,
   );
-  const pageStart = sortedQuotas.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const pageEnd = Math.min(page * PAGE_SIZE, sortedQuotas.length);
+  const pageStart = sortedQuotas.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const pageEnd = Math.min(safePage * PAGE_SIZE, sortedQuotas.length);
 
   const cellPad = compact ? "py-1 px-1.5" : "py-2 px-3";
   const nameText = compact ? "text-[11px]" : "text-sm";
@@ -157,6 +156,7 @@ export default function QuotaTable({
             : getColorClasses(quota.remaining);
           const countdown = formatResetTime(quota.resetAt);
           const resetDisplay = formatResetTimeDisplay(quota.resetAt);
+          const timeProgress = computeResetTimeProgress(quota.resetAt, quota.name);
           // recurring defaults true: a missing flag means the quota
           // refreshes at resetAt. Bonus/one-shot packs set recurring:false
           // and their resetAt is a hard expiry, so word it as "expires".
@@ -212,21 +212,46 @@ export default function QuotaTable({
                 </div>
               </div>
 
-              {/* Reset time */}
+              {/* Reset time + Time Progress Bar */}
               <div className="min-w-0 shrink">
                 {countdown !== "-" || resetDisplay ? (
                   compact ? (
-                    <div
-                      className={`${resetPrimary} text-text-primary font-medium truncate`}
-                      title={resetDisplay || ""}
-                    >
-                      {countdown !== "-" ? countdownLabel : resetDisplay}
+                    <div className="space-y-0.5">
+                      <div
+                        className={`${resetPrimary} text-text-primary font-medium truncate`}
+                        title={resetDisplay || ""}
+                      >
+                        {countdown !== "-" ? countdownLabel : resetDisplay}
+                      </div>
+                      {timeProgress && (
+                        <div
+                          className="w-16 bg-surface-3 rounded-full h-1 overflow-hidden"
+                          title={`Zeitfenster (${timeProgress.totalWindowLabel}): ${timeProgress.percentElapsed}% abgelaufen`}
+                        >
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(3, timeProgress.percentElapsed))}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="min-w-0 space-y-0.5">
+                    <div className="min-w-0 space-y-1">
                       {countdown !== "-" && (
-                        <div className={`${resetPrimary} text-text-primary font-medium truncate`}>
-                          {countdownLabel}
+                        <div className={`${resetPrimary} text-text-primary font-medium truncate flex items-center gap-1`}>
+                          <span className="material-symbols-outlined text-[13px] text-cyan-600 dark:text-cyan-400">schedule</span>
+                          <span>{countdownLabel}</span>
+                        </div>
+                      )}
+                      {timeProgress && (
+                        <div
+                          className="w-20 bg-surface-3 rounded-full h-1.5 overflow-hidden"
+                          title={`Zeitfenster (${timeProgress.totalWindowLabel}): ${timeProgress.percentElapsed}% abgelaufen, noch ${timeProgress.countdownText}`}
+                        >
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(3, timeProgress.percentElapsed))}%` }}
+                          />
                         </div>
                       )}
                       {resetDisplay && (

@@ -203,9 +203,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       if (onRequestSuccess) await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};
-      appendLog({ tokens: usage, status: "200 OK" });
-      saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true, body });
-      if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: Date.now() - requestStartTime } }));
+      const latency = { total: Date.now() - requestStartTime };
+      saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true, body, latency });
+      if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
 
       // Same cache-inclusive total for the recorded detail, so the DB and the
       // client-facing usage can never disagree.
@@ -302,12 +302,11 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
     if (onRequestSuccess) await onRequestSuccess();
 
-    const usage = parsed.usage || {};
-    appendLog({ tokens: usage, status: "200 OK" });
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true, body });
-    if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: Date.now() - requestStartTime } }));
-
     const totalLatency = Date.now() - requestStartTime;
+    const latency = { total: totalLatency, ttft: totalLatency };
+    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true, body, latency });
+    if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
+
     saveRequestDetail(buildRequestDetail({
       ...ctx,
       latency: { ttft: totalLatency, total: totalLatency },

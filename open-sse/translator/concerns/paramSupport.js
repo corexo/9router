@@ -6,6 +6,9 @@ import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 // Each rule: optional provider, regex match on model, list of params to drop.
 // A param is removed only when it is present (!== undefined).
 const STRIP_RULES = [
+  // Z.ai coding OpenAI endpoint rejects non-standard cache/session fields with 400/1210.
+  // Router session affinity is consumed before the executor; do not forward it upstream.
+  { provider: "glm", match: /glm/i, drop: ["metadata", "prompt_cache_key"] },
   // All Claude models: temperature deprecated/rejected upstream (Anthropic 400). #1748
   { match: /claude/i, drop: ["temperature"] },
   // GitHub Copilot gpt-5.4: temperature unsupported.
@@ -61,6 +64,22 @@ export function stripUnsupportedParams(provider, model, body) {
             .map(b => (b?.type === "text" && typeof b.text === "string") ? b.text : "")
             .join("");
         }
+      }
+
+      // Workers AI's chat template rejects a user turn immediately after a
+      // tool result. OpenAI clients can start a new user turn without first
+      // requesting an assistant continuation, so close that tool turn with an
+      // assistant acknowledgment before forwarding it.
+      if (provider === "cloudflare-ai") {
+        const normalized = [];
+        for (let i = 0; i < body.messages.length; i++) {
+          const msg = body.messages[i];
+          normalized.push(msg);
+          if (msg?.role === "tool" && body.messages[i + 1]?.role === "user") {
+            normalized.push({ role: "assistant", content: "Tool execution completed." });
+          }
+        }
+        body.messages = normalized;
       }
     }
     if (rule.clampToModelMaxOutput || Number.isFinite(rule.maxOutputCap)) {

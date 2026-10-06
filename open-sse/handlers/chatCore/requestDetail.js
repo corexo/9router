@@ -111,6 +111,7 @@ export function saveUsageStats({
   endpoint,
   body,
   sessionKey,
+  latency,
   label = "USAGE",
   silent = false,
 }) {
@@ -140,11 +141,14 @@ export function saveUsageStats({
     if (sKey) {
       const cached = normalized.cached_tokens || normalized.cache_read_input_tokens || 0;
       const prompt = normalized.prompt_tokens || normalized.input_tokens || inTokens;
+      const totalLatency = latency?.total ?? (typeof latency === "number" ? latency : null);
       updateSessionCacheUsage(sKey, {
         model,
         provider,
         cachedTokens: cached,
         promptTokens: prompt,
+        completionTokens: outTokens,
+        latencyMs: totalLatency,
       });
     }
   } catch (err) {

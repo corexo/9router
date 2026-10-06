@@ -46,6 +46,30 @@ function startBackgroundTokenRefreshFromCustomServer() {
     });
 }
 
+function startCacheKeepAliveFromCustomServer() {
+  const modPath = path.join(__dirname, "src", "sse", "services", "cacheKeepAlive.js");
+  import(pathToFileURL(modPath).href)
+    .then((m) => {
+      try {
+        m.startCacheKeepAlive();
+      } catch (e) {
+        console.error("[CacheKeepAlive] start failed:", e && e.message ? e.message : e);
+      }
+      const stop = () => {
+        try {
+          m.stopCacheKeepAlive();
+        } catch {}
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    })
+    .catch((e) => {
+      if (process.env.DEBUG_CACHE_KEEP_ALIVE) {
+        console.error("[CacheKeepAlive] import failed:", e && e.message ? e.message : e);
+      }
+    });
+}
+
 // Wrap Next standalone HTTP server: derive client IP from the TCP socket
 // (unspoofable) and strip client-supplied forwarding headers so downstream
 // rate-limiting keys on the real peer address instead of attacker-controlled XFF.
@@ -75,6 +99,7 @@ http.createServer = (...args) => {
   const server = origCreate(...rest, wrapped);
   server.once("listening", () => {
     startBackgroundTokenRefreshFromCustomServer();
+    startCacheKeepAliveFromCustomServer();
   });
   const origEmit = server.emit;
   // JBR 25 sends h2c upgrades that the HTTP/1.1 server would otherwise close.

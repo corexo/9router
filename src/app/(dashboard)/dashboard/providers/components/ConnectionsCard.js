@@ -119,8 +119,14 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
             </Badge>
             {hasAnyProxy && <Badge variant={proxyBadgeVariant} size="sm">Proxy</Badge>}
             {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
-            {connection.lastError && connection.isActive !== false && (
-              <span className="text-xs text-red-500 truncate max-w-[300px]" title={connection.lastError}>{connection.lastError}</span>
+            {connection.throttlePercent > 0 && (
+              <Badge
+                variant={connection.throttlePercent === 100 ? "error" : "warning"}
+                size="sm"
+                title={`${connection.throttlePercent}% gedrosselt (${100 - connection.throttlePercent}% Traffic)`}
+              >
+                {connection.throttlePercent === 100 ? "Standby (100%)" : `📉 ${connection.throttlePercent}% gedrosselt`}
+              </Badge>
             )}
             <span className="text-xs text-text-muted">#{connection.priority}</span>
           </div>

@@ -31,6 +31,10 @@ export const JEV1M_MODEL_ALIASES = new Set(["jev-1m", "nineRouter/jev-1m"]);
 // jev-free: zero-cost / flat-rate pool for subagent & short one-shot tasks.
 export const JEV_FREE_MODEL_ALIASES = new Set(["jev-free", "nineRouter/jev-free"]);
 
+// Codex ChatGPT subscriptions currently reject GPT-5.4 even though it appears
+// in the shared catalog. Keep the exclusion scoped to the Jev candidate pool.
+export const JEV_UNSUPPORTED_CODEX_MODELS = new Set(["gpt-5.4", "gpt-5.4-review"]);
+
 const BASE_INSTRUCTIONS = "Which model should handle this coding-agent request best? Judge difficulty from the current request and recent conversation context, never from session size. Session size only determines context-window compatibility. Short acknowledgements and simple follow-ups should use FAST or MID models. Each option lists its quality tier, per-token cost, context window, stickiness, recent usage and account status. Respect context-window limits against the session's approx total tokens. Prefer 'Sticky: YES' when its tier is sufficient, to keep prompt caching and style consistency. Avoid rate-limited accounts. When tiers are equal or sufficient, prefer zero-cost local/flat-rate models over paid models. Models sharing a tier are roughly equal in strength - prefer the cheaper or less-used one within a tier, and only go to a higher tier when the request actually needs it. Do not favour a vendor by name.";
 const NO_TIER_INSTRUCTIONS = "Choose the best model for this request from the provided candidates. Respect context-window limits. Prefer a sticky session when suitable, avoid rate-limited accounts, and consider cost and recent usage. Do not favour a vendor by name.";
 const FREE_INSTRUCTIONS = "Route this subagent or short one-shot task to the fastest, cheapest available model from the provided candidates. Prefer zero-cost or flat-rate models. Prompt caching and session stickiness are irrelevant — just pick the best available free/flat-rate model for the current request.";
@@ -165,8 +169,8 @@ async function buildEnrichedCriteria(models, options = {}, session = {}) {
     } else if (healthEntry?.state === "incompatible") {
       desc = `${model} | Status: INCOMPATIBLE (schema issue)`;
     } else {
-      const pricing = options.getPricingForModel?.(provider, bareModel);
-      const costStr = pricing
+      const pricing = await options.getPricingForModel?.(provider, bareModel);
+      const costStr = Number.isFinite(pricing?.input) && Number.isFinite(pricing?.output)
         ? `$${pricing.input.toFixed(2)}/1M in, $${pricing.output.toFixed(2)}/1M out`
         : "Subscription/flat-rate (no per-token cost)";
 
@@ -278,11 +282,15 @@ function resolveThinkingSuffix(rawLevel, chosenModel, options) {
  */
 export async function selectJevModel(body, availableModels, options = {}) {
   const models = [...new Set(availableModels)].filter(
-    (model) => !JEV_MODEL_ALIASES.has(model) && !JEV1M_MODEL_ALIASES.has(model),
+    (model) => !JEV_MODEL_ALIASES.has(model)
+      && !JEV1M_MODEL_ALIASES.has(model)
+      && !(model.startsWith("cx/") && JEV_UNSUPPORTED_CODEX_MODELS.has(model.slice(3))),
   );
   const apiKey = options.apiKey || process.env.TYPESAFE_API_KEY || "";
   const preferredFallback = options.defaultModel || process.env.JEV_ROUTER_DEFAULT_MODEL;
-  const fallback = models.includes(preferredFallback) ? preferredFallback : models[0];
+  const fallback = models.includes(preferredFallback)
+    ? preferredFallback
+    : (models[0] || (Array.isArray(availableModels) && availableModels.length > 0 ? availableModels[0] : null));
   const warn = options.warn || console.warn;
   // Trace-aware patch: with concurrent requests updateLastJevRequest could patch the wrong entry.
   const patchTrace = (patch) => (options.traceId ? patchJevTrace(options.traceId, patch) : updateLastJevRequest(patch));
@@ -292,7 +300,10 @@ export async function selectJevModel(body, availableModels, options = {}) {
     return fallback;
   };
 
-  if (models.length === 0) return fail("Keine verfügbaren Modelle");
+  if (models.length === 0) {
+    if (fallback) return fail("Keine passenden Modelle im gefilterten Jev-Pool, verwende verfügbaren Fallback");
+    return fail("Keine verfügbaren Modelle");
+  }
   if (!apiKey) return fail("Jev API Key fehlt");
 
   // Check decision cache before hitting API

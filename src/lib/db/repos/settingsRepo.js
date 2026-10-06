@@ -81,7 +81,7 @@ const DEFAULT_SETTINGS = {
   pxpipeTimeoutMs: 15000,
   cacheKeepAliveEnabled: true,
   cacheKeepAliveIntervalSecs: 240, // 4 minutes
-  cacheKeepAliveMaxSessions: 3, // Top 3 active sessions
+  cacheKeepAliveMaxSessions: 20, // Top 20 probe-capable active sessions
   cacheKeepAliveMaxIdleMins: 45, // Stop probing after 45m without user activity
   jevFreePoolModels: undefined, // undefined = all active non-paid models; array = explicit list
 };

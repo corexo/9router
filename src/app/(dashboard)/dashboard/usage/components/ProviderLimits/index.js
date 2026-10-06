@@ -35,8 +35,9 @@ import {
   CONNECTIONS_PAGE_SIZE,
   ACCOUNT_PAGE_SIZE_OPTIONS,
   ACCOUNT_PAGE_SIZE_MAX,
-  ACCOUNT_FILTER_OPTIONS,
   QUOTA_SORT_OPTIONS,
+  supportsResetCredits,
+  getResetCreditCount,
 } from "./utils";
 import Card from "@/shared/components/Card";
 import { ConfirmModal, EditConnectionModal } from "@/shared/components";
@@ -95,9 +96,7 @@ function kiroRegion(conn) {
 }
 
 function getCodexResetCreditCount(quota) {
-  const value = quota?.raw?.resetCredits?.availableCount;
-  const count = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(count) ? Math.max(0, count) : 0;
+  return getResetCreditCount(quota);
 }
 
 function providerLabel(providerId) {
@@ -306,25 +305,25 @@ export default function ProviderLimits() {
     [fetchQuota],
   );
 
-  const handleResetCodexLimit = useCallback(
+  const handleResetLimit = useCallback(
     async (connectionId, provider) => {
-      if (provider !== "codex" || resettingLimitId) return;
+      if (!supportsResetCredits(provider) || resettingLimitId) return;
 
       setResettingLimitId(connectionId);
       setErrors((prev) => ({ ...prev, [connectionId]: null }));
 
       try {
-        const response = await fetch(`/api/usage/${connectionId}/codex-reset-credits`, { method: "POST" });
+        const response = await fetch(`/api/usage/${connectionId}/reset-credits`, { method: "POST" });
         const result = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          throw new Error(result.message || result.error || result.code || "Failed to reset Codex limit");
+          throw new Error(result.message || result.error || result.code || `Failed to reset ${provider} limit`);
         }
 
-        await fetchQuota(connectionId, provider);
+        await fetchQuota(connectionId, provider, { force: true });
         setLastUpdated(new Date());
       } catch (error) {
-        setErrors((prev) => ({ ...prev, [connectionId]: error.message || "Failed to reset Codex limit" }));
+        setErrors((prev) => ({ ...prev, [connectionId]: error.message || `Failed to reset ${provider} limit` }));
       } finally {
         setResettingLimitId(null);
       }
@@ -1055,7 +1054,8 @@ export default function ProviderLimits() {
           // Use table layout for all providers
           const isInactive = conn.isActive === false;
           const isCodex = conn.provider === "codex";
-          const resetCreditCount = getCodexResetCreditCount(quota);
+          const canReset = supportsResetCredits(conn.provider);
+          const resetCreditCount = getResetCreditCount(quota);
           const isResettingLimit = resettingLimitId === conn.id;
           const rowBusy = deletingId === conn.id || togglingId === conn.id || isResettingLimit;
           const rawQuotas = quota?.quotas || [];
@@ -1140,47 +1140,49 @@ export default function ProviderLimits() {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    {isCodex && (
+                    {canReset && (
                       <>
                         <Tooltip
                           text={
                             resetCreditCount > 0
-                              ? `Use one Codex reset credit. Available: ${resetCreditCount}`
-                              : "No Codex reset credits available"
+                              ? `Use one ${providerLabel(conn.provider)} reset credit. Available: ${resetCreditCount}`
+                              : `Reset ${providerLabel(conn.provider)} limit locks and cooldown on PiRouter`
                           }
                         >
                           <button
                             type="button"
                             onClick={() => setResetConfirmState({ connection: conn, resetCreditCount })}
-                            disabled={resetCreditCount <= 0 || isLoading || rowBusy}
+                            disabled={isLoading || rowBusy}
                             aria-label={
                               resetCreditCount > 0
-                                ? `Use one Codex reset credit. ${resetCreditCount} available.`
-                                : "No Codex reset credits available"
+                                ? `Reset ${providerLabel(conn.provider)} limit. ${resetCreditCount} available.`
+                                : `Reset ${providerLabel(conn.provider)} limit`
                             }
                             className={`flex h-8 min-w-10 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium tabular-nums transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/60 disabled:cursor-not-allowed disabled:opacity-60 ${
                               resetCreditCount > 0
                                 ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
-                                : "border-black/10 bg-black/[0.02] text-text-muted dark:border-white/10 dark:bg-white/[0.03]"
+                                : "border-black/10 bg-black/[0.02] text-text-muted hover:bg-black/5 hover:text-primary dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/5"
                             }`}
                           >
                             <span className={`material-symbols-outlined text-[15px] ${isResettingLimit ? "animate-spin" : ""}`}>
                               {isResettingLimit ? "progress_activity" : "restart_alt"}
                             </span>
-                            <span>{resetCreditCount}</span>
+                            <span>{resetCreditCount > 0 ? resetCreditCount : "Reset"}</span>
                           </button>
                         </Tooltip>
-                        <Tooltip text="View Codex reset credit expiry">
-                          <button
-                            type="button"
-                            onClick={() => handleViewCodexResetCredits(conn)}
-                            disabled={isLoading || rowBusy}
-                            aria-label="View Codex reset credit expiry"
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                          >
-                            <span className="material-symbols-outlined text-[17px]">schedule</span>
-                          </button>
-                        </Tooltip>
+                        {isCodex && (
+                          <Tooltip text="View Codex reset credit expiry">
+                            <button
+                              type="button"
+                              onClick={() => handleViewCodexResetCredits(conn)}
+                              disabled={isLoading || rowBusy}
+                              aria-label="View Codex reset credit expiry"
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
+                            >
+                              <span className="material-symbols-outlined text-[17px]">schedule</span>
+                            </button>
+                          </Tooltip>
+                        )}
                       </>
                     )}
                     {AUTO_PING_SETTINGS_KEYS[conn.provider] && conn.authType === "oauth" && (
@@ -1454,11 +1456,15 @@ export default function ProviderLimits() {
         onConfirm={async () => {
           const connection = resetConfirmState?.connection;
           if (!connection) return;
-          await handleResetCodexLimit(connection.id, connection.provider);
+          await handleResetLimit(connection.id, connection.provider);
           setResetConfirmState(null);
         }}
-        title="Reset Codex limit?"
-        message={`Use 1 Codex reset credit for ${getConnectionLabel(resetConfirmState?.connection || {}) || "this account"}. This cannot be undone. Remaining credits: ${resetConfirmState?.resetCreditCount ?? 0}.`}
+        title={`Reset ${providerLabel(resetConfirmState?.connection?.provider || "")} limit?`}
+        message={
+          resetConfirmState?.resetCreditCount > 0
+            ? `Use 1 reset credit for ${getConnectionLabel(resetConfirmState?.connection || {}) || "this account"}. This cannot be undone. Remaining credits: ${resetConfirmState?.resetCreditCount ?? 0}.`
+            : `Reset rate limit cooldown and connection locks for ${getConnectionLabel(resetConfirmState?.connection || {}) || "this account"} on PiRouter?`
+        }
         confirmText="Reset limit"
         cancelText="Cancel"
         variant="danger"

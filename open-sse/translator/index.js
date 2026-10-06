@@ -66,7 +66,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   // The generic helper inserts OpenAI `role: tool` messages, which a direct
   // Claude→Kiro translator cannot consume and which cannot repair partial
   // parallel tool results.
-  if (targetFormat !== FORMATS.KIRO) {
+  if (targetFormat !== FORMATS.KIRO && provider !== "cloudflare-ai") {
     fixMissingToolResponses(result);
   }
 

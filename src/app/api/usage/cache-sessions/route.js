@@ -6,19 +6,54 @@ export const dynamic = "force-dynamic";
 /** Per-session cache observability snapshot (in-memory registry, newest first). */
 export async function GET(request) {
   try {
-    const showPath = request && new URL(request.url).searchParams.get("cockpit") === "true";
-    const sessions = getSessionCacheSnapshot()
-      .map(({ cacheId, state, models, providers, piProjectPath, cachedTokens, promptTokens, requests, cacheActive, lastActive }) => ({
+    const { searchParams } = new URL(request.url);
+    const filter = searchParams.get("filter");
+
+    let list = getSessionCacheSnapshot({ includeTurns: true });
+    if (filter === "active") {
+      list = list.filter((s) => s.state === "active");
+    }
+
+    const sessions = list
+      .map(({
         cacheId,
         state,
         models,
-        provider: providers[0] || null,
-        ...(showPath ? { piProjectPath: piProjectPath || null } : {}),
+        providers,
+        connectionId,
+        cachedTokens,
+        promptTokens,
+        requests,
+        cacheActive,
+        keepAliveEnabled,
+        keepAlivePingCount,
+        lastKeepAliveAt,
+        lastKeepAliveStatus,
+        hasProbePrefix,
+        ttlRemainingSecs,
+        lastActive,
+        createdAt,
+        turns
+      }) => ({
+        cacheId,
+        state,
+        models,
+        providers: providers || [],
+        provider: providers?.[0] || null,
+        connectionId: connectionId || null,
         cacheActive,
         cachedTokens,
         promptTokens,
         requests,
+        keepAliveEnabled: !!keepAliveEnabled,
+        keepAlivePingCount: keepAlivePingCount || 0,
+        lastKeepAliveAt: lastKeepAliveAt || null,
+        lastKeepAliveStatus: lastKeepAliveStatus || null,
+        hasProbePrefix: !!hasProbePrefix,
+        ttlRemainingSecs: ttlRemainingSecs ?? 0,
         lastActive,
+        createdAt: createdAt || lastActive,
+        turns: turns || [],
       }))
       .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
 

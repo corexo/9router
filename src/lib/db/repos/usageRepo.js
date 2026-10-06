@@ -1253,10 +1253,14 @@ export async function getCockpitData(period = "7d") {
       return {
         id: c.id,
         name: c.name || c.email || c.id,
+        email: c.email || null,
         provider: c.provider,
         authType: c.authType,
         priority: c.priority ?? 1,
         isActive: Boolean(c.isActive),
+        throttlePercent: c.throttlePercent ?? 0,
+        weight: c.weight ?? null,
+        dynamicBalanceEnabled: Boolean(c.dynamicBalanceEnabled),
         requests: u.requests,
         promptTokens: prompt,
         cachedTokens: cached,
@@ -1272,6 +1276,34 @@ export async function getCockpitData(period = "7d") {
 
     const activeAccountsCount = accounts.filter((a) => a.isActive).length;
 
+    let activeSessions = [];
+    let allSessions = [];
+    try {
+      const { getSessionCacheSnapshot, hydrateSessionCacheFromDb } = await import("@/lib/jev/sessionCache.js");
+      await hydrateSessionCacheFromDb().catch(() => {});
+      const list = getSessionCacheSnapshot({ includeTurns: true })
+        .map(({ cacheId, state, models, providers, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+          cacheId,
+          state,
+          models,
+          providers: providers || [],
+          provider: providers?.[0] || null,
+          cacheActive,
+          cachedTokens,
+          promptTokens,
+          requests,
+          lastActive,
+          createdAt: createdAt || lastActive,
+          turns: turns || [],
+        }))
+        .sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
+
+      allSessions = list;
+      activeSessions = list.filter((s) => s.state === "active");
+    } catch (sessionErr) {
+      console.warn("[usageRepo] Failed to fetch session cache in getCockpitData:", sessionErr.message);
+    }
+
     return {
       period,
       kpis: {
@@ -1286,6 +1318,14 @@ export async function getCockpitData(period = "7d") {
         estimatedSavingsUsd: cacheStats.summary.estimatedSavingsUsd,
         activeAccountsCount,
         totalAccountsCount: accounts.length,
+        activeSessionsCount: activeSessions.length,
+        totalSessionsCount: allSessions.length,
+      },
+      sessions: {
+        active: activeSessions,
+        all: allSessions.slice(0, 30),
+        activeCount: activeSessions.length,
+        totalCount: allSessions.length,
       },
       jev: {
         requests: jevStats.requests,
@@ -1309,7 +1349,8 @@ export async function getCockpitData(period = "7d") {
     console.error("[usageRepo] getCockpitData failed:", e);
     return {
       period,
-      kpis: { jevDecisions: 0, jevSuccessRate: 100, jevFallbacks: 0, jevAvgLatencyMs: 0, cacheHitRate: 0, totalCachedTokens: 0, totalPromptTokens: 0, totalRequests: 0, estimatedSavingsUsd: 0, activeAccountsCount: 0, totalAccountsCount: 0 },
+      kpis: { jevDecisions: 0, jevSuccessRate: 100, jevFallbacks: 0, jevAvgLatencyMs: 0, cacheHitRate: 0, totalCachedTokens: 0, totalPromptTokens: 0, totalRequests: 0, estimatedSavingsUsd: 0, activeAccountsCount: 0, totalAccountsCount: 0, activeSessionsCount: 0, totalSessionsCount: 0 },
+      sessions: { active: [], all: [], activeCount: 0, totalCount: 0 },
       jev: { requests: 0, successRate: 100, fallbacks: 0, avgLatencyMs: 0, topChoices: [], callers: {}, series: [] },
       cache: { summary: {}, timeSeries: [], byProvider: [] },
       accounts: [],

@@ -3,25 +3,65 @@ import { getAdapter } from "../driver.js";
 
 function rowToKey(row) {
   if (!row) return null;
+  const today = new Date().toISOString();
   return {
     id: row.id,
     key: row.key,
     name: row.name,
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
-    createdAt: row.createdAt,
+    createdAt: row.createdAt || today,
+    lastUsed: row.lastUsed || null,
+    requestsToday: Number(row.requestsToday || 0),
+    totalRequests: Number(row.totalRequests || 0),
   };
 }
 
 export async function getApiKeys() {
   const db = await getAdapter();
-  const rows = db.all(`SELECT * FROM apiKeys ORDER BY createdAt ASC`);
+  const rows = db.all(`
+    SELECT 
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
+      COALESCE(u.totalRequests, 0) as totalRequests,
+      COALESCE(u.requestsToday, 0) as requestsToday,
+      u.lastUsed
+    FROM apiKeys k
+    LEFT JOIN (
+      SELECT 
+        apiKey,
+        COUNT(*) as totalRequests,
+        MAX(timestamp) as lastUsed,
+        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday
+      FROM usageHistory
+      WHERE apiKey IS NOT NULL
+      GROUP BY apiKey
+    ) u ON k.key = u.apiKey
+    ORDER BY k.createdAt ASC
+  `);
   return rows.map(rowToKey);
 }
 
 export async function getApiKeyById(id) {
   const db = await getAdapter();
-  const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
+  const row = db.get(`
+    SELECT 
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
+      COALESCE(u.totalRequests, 0) as totalRequests,
+      COALESCE(u.requestsToday, 0) as requestsToday,
+      u.lastUsed
+    FROM apiKeys k
+    LEFT JOIN (
+      SELECT 
+        apiKey,
+        COUNT(*) as totalRequests,
+        MAX(timestamp) as lastUsed,
+        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday
+      FROM usageHistory
+      WHERE apiKey IS NOT NULL
+      GROUP BY apiKey
+    ) u ON k.key = u.apiKey
+    WHERE k.id = ?
+  `, [id]);
   return rowToKey(row);
 }
 

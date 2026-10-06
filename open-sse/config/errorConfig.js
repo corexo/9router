@@ -58,6 +58,8 @@ const COOLDOWN = {
  */
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
+  // Codex may reject a model for one ChatGPT account while another account supports it.
+  { text: "not supported when using codex with a chatgpt account", cooldownMs: COOLDOWN.long },
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },
@@ -72,6 +74,9 @@ export const ERROR_RULES = [
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
+  // 410 is a retired upstream model. Continue the combo; chat.js permanently
+  // excludes it from future combo and Jev selections via model health.
+  { status: 410, cooldownMs: 0 },
   { status: 429, backoff: true },
 ];
 

@@ -16,7 +16,6 @@ export default function JevPoolClient() {
   const [tier, setTier] = useState("balanced");
   const [distributionEnabled, setDistributionEnabled] = useState(true);
   const [search, setSearch] = useState("");
-  const [paidOnly, setPaidOnly] = useState(false);
   const [tierOverrides, setTierOverrides] = useState({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -48,8 +47,8 @@ export default function JevPoolClient() {
 
   const allModels = data?.models || [];
   const visible = useMemo(() => allModels.filter((model) =>
-    (!paidOnly || PAID_PROVIDERS.has(model.provider)) &&
-    `${model.id} ${model.provider}`.toLowerCase().includes(search.toLowerCase())), [allModels, paidOnly, search]);
+    PAID_PROVIDERS.has(model.provider) &&
+    `${model.id} ${model.provider}`.toLowerCase().includes(search.toLowerCase())), [allModels, search]);
   const freeVisible = useMemo(() => allModels.filter((model) =>
     !PAID_PROVIDERS.has(model.provider) &&
     `${model.id} ${model.provider}`.toLowerCase().includes(search.toLowerCase())), [allModels, search]);
@@ -129,7 +128,7 @@ export default function JevPoolClient() {
       <section className="grid gap-3 md:grid-cols-3">{providerStats.map((stat) => <Card key={stat.provider} className="p-4"><div className="flex justify-between"><h2 className="font-semibold">{stat.provider}</h2><Badge variant="outline">Paid</Badge></div><p className="mt-2 text-sm text-zinc-400">{fmt(stat.requests)} Requests · {fmt((stat.promptTokens || 0) + (stat.completionTokens || 0))} Tokens</p></Card>)}</section>
       <Card className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-3"><label className="cursor-pointer rounded border border-zinc-700 px-3 py-2 text-sm">JSON importieren<input type="file" accept="application/json,.json" className="sr-only" onChange={importTiers} /></label><Button variant="outline" onClick={exportTiers}>Tier-JSON exportieren</Button><span className="text-xs text-zinc-500">Importformat: {`{"provider/model":"low|fast|mid|strong|frontier"}`}</span></div>
-        <div className="flex flex-wrap items-center gap-3"><input aria-label="Modelle suchen" className="min-w-56 rounded border border-zinc-700 bg-transparent px-3 py-2" placeholder="Modell suchen" value={search} onChange={(event) => setSearch(event.target.value)} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={paidOnly} onChange={(event) => setPaidOnly(event.target.checked)} />Nur Paid (Claude, GLM, Codex)</label><Button variant="outline" onClick={() => setVisible(true)}>Alle sichtbar</Button><Button variant="outline" onClick={() => setVisible(false)}>Keine sichtbar</Button><span className="ml-auto text-sm text-zinc-400">Ausgewählt: {selected.length} · angezeigt: {visible.length}</span></div>
+        <div className="flex flex-wrap items-center gap-3"><input aria-label="Modelle suchen" className="min-w-56 rounded border border-zinc-700 bg-transparent px-3 py-2" placeholder="Modell suchen" value={search} onChange={(event) => setSearch(event.target.value)} /><Button variant="outline" onClick={() => setVisible(true)}>Alle sichtbar</Button><Button variant="outline" onClick={() => setVisible(false)}>Keine sichtbar</Button><span className="ml-auto text-sm text-zinc-400">Ausgewählt: {selected.length} · angezeigt: {visible.length}</span></div>
         <p className="text-xs text-zinc-400">Modelle zwischen Spalten ziehen oder über „Verschieben nach" zuordnen. Änderungen mit Speichern übernehmen.</p>
         <div className="grid gap-3 lg:grid-cols-3 2xl:grid-cols-6">{TIERS.map((column) => {
           const models = visible.filter((model) => (tierOverrides[model.id] || model.tier || "unknown") === column);

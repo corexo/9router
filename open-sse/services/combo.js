@@ -217,6 +217,97 @@ function rotateModelsFromIndex(models, currentIndex) {
   return rotatedModels;
 }
 
+const ALIAS_TO_PROVIDER_MAP = {
+  cc: "claude",
+  cx: "codex",
+  gh: "github",
+  cf: "cloudflare-ai",
+  glm: "glm",
+  gemini: "gemini",
+  nvidia: "nvidia",
+  openai: "openai",
+  groq: "groq",
+  mistral: "mistral",
+  deepseek: "deepseek",
+  openrouter: "openrouter",
+  cerebras: "cerebras",
+  sambanova: "sambanova",
+  together: "together",
+  cohere: "cohere",
+  xai: "xai",
+  ollama: "ollama",
+};
+
+export function getProviderForModel(modelStr) {
+  if (!modelStr || typeof modelStr !== "string") return "";
+  const slash = modelStr.indexOf("/");
+  const prefix = slash > 0 ? modelStr.slice(0, slash).toLowerCase() : modelStr.toLowerCase();
+  return ALIAS_TO_PROVIDER_MAP[prefix] || prefix;
+}
+
+/**
+ * Apply provider balancer weighting to candidate models for new sessions.
+ * Preserves model fallback order while placing winning provider's models first.
+ */
+export function applyProviderBalancer(models, providerBalancer, log = null) {
+  if (!Array.isArray(models) || models.length <= 1 || !providerBalancer || providerBalancer.enabled === false) {
+    return models;
+  }
+
+  const pConfig = providerBalancer.providers || {};
+  const modelProviders = new Map();
+  models.forEach((m) => {
+    const p = getProviderForModel(m);
+    if (!modelProviders.has(p)) {
+      modelProviders.set(p, []);
+    }
+    modelProviders.get(p).push(m);
+  });
+
+  // If the combo models only belong to a single provider, no cross-provider balancing needed
+  if (modelProviders.size <= 1) {
+    return models;
+  }
+
+  const eligibleProviders = [];
+  let totalWeight = 0;
+
+  for (const [provider, pModels] of modelProviders.entries()) {
+    const cfg = pConfig[provider];
+    if (cfg && cfg.enabled !== false && Number(cfg.weight) > 0) {
+      const weight = Number(cfg.weight);
+      eligibleProviders.push({ provider, weight, models: pModels });
+      totalWeight += weight;
+    }
+  }
+
+  // If no providers have positive weight, retain original model order
+  if (eligibleProviders.length === 0 || totalWeight <= 0) {
+    return models;
+  }
+
+  const roll = Math.random() * totalWeight;
+  let cumulative = 0;
+  let winningProvider = eligibleProviders[0].provider;
+
+  for (const ep of eligibleProviders) {
+    cumulative += ep.weight;
+    if (roll < cumulative) {
+      winningProvider = ep.provider;
+      break;
+    }
+  }
+
+  if (log && typeof log.info === "function") {
+    log.info("COMBO", `Provider balancer selected '${winningProvider}' for new session (weights: ${eligibleProviders.map(e => `${e.provider}:${e.weight}`).join(", ")})`);
+  }
+
+  const winningModels = models.filter((m) => getProviderForModel(m) === winningProvider);
+  const otherModels = models.filter((m) => getProviderForModel(m) !== winningProvider);
+
+  return [...winningModels, ...otherModels];
+}
+
 /**
  * Get rotated model list based on strategy
  * @param {string[]} models - Array of model strings
@@ -321,7 +412,7 @@ export function getComboModelsFromData(modelStr, combosData) {
   }
   
   const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
-  const combo = combos.find(c => c.name === modelStr);
+  const combo = combos.find(c => c.name?.toLowerCase() === modelStr?.toLowerCase());
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }
@@ -340,7 +431,7 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, providerBalancer = null }) {
   // Check if this session has a sticky cache pin (keeps same model for cache hits)
   const stickyModel = getStickyModel(body, { model: comboName }, models);
   if (stickyModel) {
@@ -353,8 +444,14 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     clearStickyPin(body, { model: comboName });
   }
 
+  // Apply Provider Balancer for new sessions (before rotation/fallback)
+  let candidateModels = models;
+  if (providerBalancer && providerBalancer.enabled) {
+    candidateModels = applyProviderBalancer(candidateModels, providerBalancer, log);
+  }
+
   // Apply rotation strategy if enabled
-  let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
+  let rotatedModels = getRotatedModels(candidateModels, comboName, comboStrategy, comboStickyLimit);
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
   if (autoSwitch) {

@@ -78,6 +78,24 @@ export async function PATCH(request) {
       else body.jevApiKey = String(body.jevApiKey).trim();
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "jevModelTiers")) {
+      const validTiers = new Set(["low", "fast", "mid", "strong", "frontier"]);
+      if (!body.jevModelTiers || typeof body.jevModelTiers !== "object" || Array.isArray(body.jevModelTiers) || Object.keys(body.jevModelTiers).length > 2000 || Object.entries(body.jevModelTiers).some(([model, tier]) => !model.includes("/") || model.length > 300 || !validTiers.has(tier))) {
+        return NextResponse.json({ error: "Invalid jevModelTiers" }, { status: 400 });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "jevPoolModels")) {
+      if (!Array.isArray(body.jevPoolModels) || body.jevPoolModels.length > 1000 || body.jevPoolModels.some((id) => typeof id !== "string" || id.length > 300 || !id.includes("/"))) {
+        return NextResponse.json({ error: "Invalid jevPoolModels" }, { status: 400 });
+      }
+      body.jevPoolModels = [...new Set(body.jevPoolModels)];
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "jevTierDistributionEnabled") && typeof body.jevTierDistributionEnabled !== "boolean") {
+      return NextResponse.json({ error: "Invalid jevTierDistributionEnabled" }, { status: 400 });
+    }
+
     // "Modell-Klasse" slider: only known preference ids may be stored.
     if (Object.prototype.hasOwnProperty.call(body, "jevTierPreference")) {
       const normalized = normalizeTierPreference(body.jevTierPreference);

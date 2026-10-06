@@ -19,7 +19,7 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
   });
 
   it("still falls back for account-scoped statuses", () => {
-    for (const status of [401, 402, 403, 404, 429]) {
+    for (const status of [401, 402, 403, 404, 410, 429]) {
       expect(checkFallbackError(status, "nope").shouldFallback).toBe(true);
     }
   });

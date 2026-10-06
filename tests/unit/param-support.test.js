@@ -45,6 +45,14 @@ describe("stripUnsupportedParams", () => {
     expect(body.messages[0].content).toBeNull();
   });
 
+  it("drops Hermes cache affinity fields for Z.ai GLM", () => {
+    const body = { metadata: { session_id: "stable" }, prompt_cache_key: "hermes:stable", stream: true };
+
+    stripUnsupportedParams("glm", "glm-5.3-flash", body);
+
+    expect(body).toEqual({ stream: true });
+  });
+
   it("still drops unsupported GitHub model params", () => {
     const body = { temperature: 0.7, top_p: 1 };
 

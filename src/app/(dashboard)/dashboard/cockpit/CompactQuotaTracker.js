@@ -7,33 +7,38 @@ import {
   parseQuotaData,
   getRemainingPercentage,
   formatResetTime,
+  computeResetTimeProgress,
   getConnectionLabel,
+  supportsResetCredits,
+  getResetCreditCount,
 } from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils";
 
 const QUOTA_CACHE_STORAGE_KEY = "cockpit_compact_quota_cache";
 
 export default function CompactQuotaTracker() {
   const [connections, setConnections] = useState([]);
-  const [quotasByConn, setQuotasByConn] = useState({});
+  const [quotasByConn, setQuotasByConn] = useState(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const cached = window.localStorage.getItem(QUOTA_CACHE_STORAGE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.quotas && Object.keys(parsed.quotas).length > 0) {
+          return parsed.quotas;
+        }
+      }
+    } catch {}
+    return {};
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState(new Set()); // per-account refresh
   const [filterMode, setFilterMode] = useState("all"); // "all" | "low"
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "table"
   const [selectedProvider, setSelectedProvider] = useState("all");
-
-  // Load cached quota data on mount for instant rendering
-  useEffect(() => {
-    try {
-      const cached = window.localStorage.getItem(QUOTA_CACHE_STORAGE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed.quotas && Object.keys(parsed.quotas).length > 0) {
-          setQuotasByConn(parsed.quotas);
-        }
-      }
-    } catch {}
-  }, []);
+  const [resettingId, setResettingId] = useState(null);
+  const [resetConfirmState, setResetConfirmState] = useState(null); // { account, resetCreditCount }
+  const [resetFeedback, setResetFeedback] = useState(null); // { type: 'success'|'error', text: string }
 
   // Fetch connections and quotas
   const fetchAllQuotas = useCallback(async (force = false) => {
@@ -126,8 +131,50 @@ export default function CompactQuotaTracker() {
     }
   }, []);
 
+  // Execute reset for an account (Codex, Claude, GLM)
+  const handleExecuteReset = useCallback(async (account) => {
+    if (!account || resettingId) return;
+    setResettingId(account.id);
+    setResetFeedback(null);
+    try {
+      const res = await fetch(`/api/usage/${account.id}/reset-credits`, {
+        method: "POST",
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(result.message || result.error || "Reset fehlgeschlagen");
+      }
+
+      // Refresh single account quota directly
+      await refreshSingleAccount(account.conn);
+      setResetFeedback({
+        type: "success",
+        text: `Limit für ${account.name} (${account.provider}) erfolgreich zurückgesetzt!`,
+      });
+      setTimeout(() => setResetFeedback(null), 5000);
+    } catch (err) {
+      setResetFeedback({
+        type: "error",
+        text: `Fehler beim Reset für ${account.name}: ${err.message}`,
+      });
+      setTimeout(() => setResetFeedback(null), 6000);
+    } finally {
+      setResettingId(null);
+      setResetConfirmState(null);
+    }
+  }, [refreshSingleAccount, resettingId]);
+
   useEffect(() => {
-    fetchAllQuotas(false);
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        fetchAllQuotas(false);
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [fetchAllQuotas]);
 
   // Transform connections with their quota entries
@@ -140,6 +187,7 @@ export default function CompactQuotaTracker() {
       const quotas = quotaInfo.quotas.map((q) => {
         const pct = getRemainingPercentage(q);
         const resetCountdown = formatResetTime(q.resetAt);
+        const timeProgress = computeResetTimeProgress(q.resetAt, q.name);
         return {
           name: q.name,
           remainingPct: pct,
@@ -147,12 +195,15 @@ export default function CompactQuotaTracker() {
           total: q.total,
           resetAt: q.resetAt,
           resetCountdown,
+          timeProgress,
         };
       });
 
       // Find lowest remaining quota
       const minPct = Math.min(...quotas.map((q) => q.remainingPct));
       const hasLowQuota = minPct < 30;
+      const supportsReset = supportsResetCredits(conn.provider);
+      const resetCreditCount = supportsReset ? getResetCreditCount(quotaInfo) : 0;
 
       list.push({
         id: conn.id,
@@ -164,6 +215,8 @@ export default function CompactQuotaTracker() {
         quotas,
         minPct,
         hasLowQuota,
+        supportsReset,
+        resetCreditCount,
       });
     }
 
@@ -189,6 +242,10 @@ export default function CompactQuotaTracker() {
     return quotaAccounts.filter((a) => a.hasLowQuota).length;
   }, [quotaAccounts]);
 
+  const totalResetCredits = useMemo(() => {
+    return quotaAccounts.reduce((sum, a) => sum + (a.resetCreditCount || 0), 0);
+  }, [quotaAccounts]);
+
   return (
     <Card padding="md" className="flex flex-col border-border/80">
       {/* Header Bar */}
@@ -211,9 +268,15 @@ export default function CompactQuotaTracker() {
                   {lowQuotaCount} knapp (&lt;30%)
                 </span>
               )}
+              {totalResetCredits > 0 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  <span className="material-symbols-outlined text-[13px]">bolt</span>
+                  {totalResetCredits} Reset-Credit{totalResetCredits > 1 ? "s" : ""}
+                </span>
+              )}
             </div>
             <p className="text-xs text-text-muted">
-              Echtzeit-Überwachung der 5h-Windows, Wochen-Limits und Ratenbegrenzungen
+              Echtzeit-Überwachung der 5h-Windows, Wochen-Limits und Ratenbegrenzungen mit Countdown-Balken
             </p>
           </div>
         </div>
@@ -309,6 +372,30 @@ export default function CompactQuotaTracker() {
         </div>
       </div>
 
+      {/* Reset Feedback Notification */}
+      {resetFeedback && (
+        <div
+          className={`mb-3 p-2.5 rounded-lg text-xs font-medium flex items-center justify-between border ${
+            resetFeedback.type === "success"
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+              : "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]">
+              {resetFeedback.type === "success" ? "check_circle" : "error"}
+            </span>
+            <span>{resetFeedback.text}</span>
+          </div>
+          <button
+            onClick={() => setResetFeedback(null)}
+            className="p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <span className="material-symbols-outlined text-[14px]">close</span>
+          </button>
+        </div>
+      )}
+
       {/* Content Area */}
       {loading && quotaAccounts.length === 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 py-2">
@@ -355,8 +442,18 @@ export default function CompactQuotaTracker() {
                       <div className="font-semibold text-xs text-text-main truncate" title={acc.name}>
                         {acc.name}
                       </div>
-                      <div className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
-                        {acc.provider}
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
+                          {acc.provider}
+                        </span>
+                        {acc.conn?.throttlePercent > 0 && (
+                          <span
+                            className="px-1.5 py-0.2 rounded text-[9px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 lowercase"
+                            title={`${acc.conn.throttlePercent}% gedrosselt (${100 - acc.conn.throttlePercent}% Traffic)`}
+                          >
+                            📉 {acc.conn.throttlePercent}%
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -386,10 +483,9 @@ export default function CompactQuotaTracker() {
                 </div>
 
                 {/* Quota Limits List */}
-                <div className="space-y-2 mt-2">
+                <div className="space-y-2.5 mt-2">
                   {acc.quotas.map((q, idx) => {
                     const pct = q.remainingPct;
-                    const isDepleted = pct <= 5;
                     const isLow = pct < 30;
                     const barColor = isLow
                       ? "bg-rose-500"
@@ -403,9 +499,10 @@ export default function CompactQuotaTracker() {
                       : "text-emerald-600 dark:text-emerald-400 font-medium";
 
                     return (
-                      <div key={idx} className="flex flex-col gap-1">
+                      <div key={idx} className="flex flex-col gap-1 p-2 rounded-lg bg-surface-1/40 border border-border/40">
+                        {/* Quota Name & Percent Available */}
                         <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-text-muted truncate max-w-[120px]" title={q.name}>
+                          <span className="text-text-main font-medium truncate max-w-[130px]" title={q.name}>
                             {q.name}
                           </span>
                           <div className="flex items-center gap-1.5 font-mono">
@@ -415,7 +512,7 @@ export default function CompactQuotaTracker() {
                           </div>
                         </div>
 
-                        {/* Thin Progress Bar */}
+                        {/* Thin Quota Progress Bar */}
                         <div className="w-full bg-surface-3 rounded-full h-1.5 overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-300 ${barColor}`}
@@ -423,17 +520,74 @@ export default function CompactQuotaTracker() {
                           />
                         </div>
 
-                        {/* Reset countdown if available */}
-                        {q.resetCountdown && q.resetCountdown !== "-" && (
-                          <div className="flex items-center justify-end text-[10px] text-text-muted font-mono">
+                        {/* Time Window Progress Bar (Zeit-Balken) */}
+                        {q.timeProgress ? (
+                          <div className="mt-1 pt-1 border-t border-border/30 flex flex-col gap-1">
+                            <div className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400 font-medium">
+                                <span className="material-symbols-outlined text-[12px]">schedule</span>
+                                <span>Reset in {q.timeProgress.countdownText}</span>
+                              </span>
+                              <span className="text-[9px] text-text-muted/70">
+                                {q.timeProgress.totalWindowLabel} ({q.timeProgress.percentElapsed}% abgelaufen)
+                              </span>
+                            </div>
+                            {/* Visual Time Bar */}
+                            <div
+                              className="w-full bg-surface-3 rounded-full h-1 overflow-hidden"
+                              title={`Zeitfenster (${q.timeProgress.totalWindowLabel}): ${q.timeProgress.percentElapsed}% abgelaufen, noch ${q.timeProgress.countdownText} verbleibend`}
+                            >
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
+                                style={{ width: `${Math.min(100, Math.max(3, q.timeProgress.percentElapsed))}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : q.resetCountdown && q.resetCountdown !== "-" ? (
+                          <div className="flex items-center justify-end text-[10px] text-text-muted font-mono mt-0.5">
                             <span>Reset in {q.resetCountdown}</span>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Reset Credit Counter & Reset Action Button */}
+              {acc.supportsReset && (
+                <div className="mt-3 pt-2.5 border-t border-border/50 flex items-center justify-between text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-amber-500">bolt</span>
+                    <span className="font-mono text-text-muted">
+                      {acc.resetCreditCount > 0 ? (
+                        <span className="font-bold text-amber-600 dark:text-amber-400">
+                          {acc.resetCreditCount} Reset{acc.resetCreditCount > 1 ? "s" : ""}
+                        </span>
+                      ) : (
+                        <span>0 Resets</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setResetConfirmState({ account: acc, resetCreditCount: acc.resetCreditCount })}
+                    disabled={resettingId === acc.id}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs ${
+                      acc.resetCreditCount > 0
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 active:scale-95"
+                        : "border-border bg-surface-2 text-text-muted hover:text-text-main hover:bg-surface-3 active:scale-95"
+                    }`}
+                    title="Wöchentliches Kontingent / Rate-Limit zurücksetzen"
+                  >
+                    <span className={`material-symbols-outlined text-[13px] ${resettingId === acc.id ? "animate-spin" : ""}`}>
+                      {resettingId === acc.id ? "progress_activity" : "restart_alt"}
+                    </span>
+                    <span>Reset</span>
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -447,12 +601,17 @@ export default function CompactQuotaTracker() {
                 <th className="p-2.5">Provider</th>
                 <th className="p-2.5">Limits &amp; Verbleibende Quotas</th>
                 <th className="p-2.5 text-center">Niedrigste Quota</th>
-                <th className="p-2.5 text-right">Nächster Reset</th>
+                <th className="p-2.5 text-right">Nächster Reset (Zeit-Balken)</th>
+                <th className="p-2.5 text-center">Reset-Credits</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredAccounts.map((acc) => {
-                const earliestReset = acc.quotas
+                const earliestTimeProgress = acc.quotas
+                  .map((q) => q.timeProgress)
+                  .find((tp) => tp && tp.countdownText && tp.countdownText !== "-");
+
+                const earliestResetText = acc.quotas
                   .map((q) => q.resetCountdown)
                   .find((c) => c && c !== "-");
 
@@ -484,7 +643,17 @@ export default function CompactQuotaTracker() {
                       </div>
                     </td>
                     <td className="p-2.5 font-mono text-text-muted uppercase text-[11px]">
-                      {acc.provider}
+                      <div className="flex items-center gap-1.5">
+                        <span>{acc.provider}</span>
+                        {acc.conn?.throttlePercent > 0 && (
+                          <span
+                            className="px-1.5 py-0.2 rounded text-[9px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 lowercase"
+                            title={`${acc.conn.throttlePercent}% gedrosselt (${100 - acc.conn.throttlePercent}% Traffic)`}
+                          >
+                            📉 {acc.conn.throttlePercent}%
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-2.5">
                       <div className="flex flex-wrap gap-1.5 items-center">
@@ -523,14 +692,200 @@ export default function CompactQuotaTracker() {
                         {acc.minPct}%
                       </span>
                     </td>
-                    <td className="p-2.5 text-right font-mono text-text-muted">
-                      {earliestReset ? `in ${earliestReset}` : "—"}
+                    <td className="p-2.5 text-right font-mono">
+                      {earliestTimeProgress ? (
+                        <div className="inline-flex flex-col items-end gap-1 min-w-[130px]">
+                          <div className="flex items-center gap-1 text-[11px] text-cyan-700 dark:text-cyan-300 font-medium">
+                            <span className="material-symbols-outlined text-[12px]">schedule</span>
+                            <span>in {earliestTimeProgress.countdownText}</span>
+                          </div>
+                          {/* Horizontal Time Bar */}
+                          <div
+                            className="w-24 bg-surface-3 rounded-full h-1.5 overflow-hidden"
+                            title={`Zeitfenster (${earliestTimeProgress.totalWindowLabel}): ${earliestTimeProgress.percentElapsed}% abgelaufen, noch ${earliestTimeProgress.countdownText}`}
+                          >
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
+                              style={{ width: `${Math.min(100, Math.max(3, earliestTimeProgress.percentElapsed))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : earliestResetText ? (
+                        <span className="text-text-muted text-xs">in {earliestResetText}</span>
+                      ) : (
+                        <span className="text-text-muted text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="p-2.5 text-center">
+                      {acc.supportsReset ? (
+                        <div className="inline-flex items-center justify-center gap-1.5">
+                          {acc.resetCreditCount > 0 ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                              ⚡ {acc.resetCreditCount}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-text-muted font-mono">0</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setResetConfirmState({ account: acc, resetCreditCount: acc.resetCreditCount })}
+                            disabled={resettingId === acc.id}
+                            className="p-1 rounded text-text-muted hover:text-amber-500 hover:bg-surface-3 transition-colors disabled:opacity-40"
+                            title="Limit zurücksetzen"
+                          >
+                            <span className={`material-symbols-outlined text-[14px] ${resettingId === acc.id ? "animate-spin" : ""}`}>
+                              {resettingId === acc.id ? "progress_activity" : "restart_alt"}
+                            </span>
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-text-muted text-[10px]">—</span>
+                      )}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Explicit Confirmation Modal for Resetting Quota Limits */}
+      {resetConfirmState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-black/15 bg-white shadow-2xl ring-1 ring-black/10 dark:border-white/15 dark:bg-neutral-950 dark:ring-white/10">
+            {/* Modal Header with Warning Icon */}
+            <div className="flex items-start justify-between gap-3 border-b border-black/10 bg-amber-500/10 px-5 py-4 dark:border-white/10 dark:bg-amber-500/15">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                  <span className="material-symbols-outlined text-[24px]">warning</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-text-main">
+                    Kontingent-Reset bestätigen
+                  </h3>
+                  <p className="text-xs text-text-muted">
+                    Soll das Kontingent für diesen Account wirklich zurückgesetzt werden?
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!resettingId) setResetConfirmState(null);
+                }}
+                disabled={Boolean(resettingId)}
+                className="p-1 rounded-lg text-text-muted hover:bg-black/5 hover:text-text-main transition-colors dark:hover:bg-white/5 disabled:opacity-40"
+                aria-label="Modal schließen"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              {/* Account Card Box */}
+              <div className="p-3 rounded-xl border border-border/70 bg-surface-2/60 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <ProviderIcon
+                    providerId={resetConfirmState.account?.provider}
+                    size={22}
+                    className="size-5.5 rounded object-contain shrink-0"
+                    fallbackText={resetConfirmState.account?.provider?.slice(0, 2).toUpperCase()}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-xs text-text-main truncate">
+                      {resetConfirmState.account?.name}
+                    </div>
+                    <div className="text-[10px] text-text-muted uppercase font-mono">
+                      {resetConfirmState.account?.provider}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0">
+                  {resetConfirmState.resetCreditCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                      ⚡ {resetConfirmState.resetCreditCount} Credit{resetConfirmState.resetCreditCount > 1 ? "s" : ""}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-text-muted font-mono">0 Credits</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Warning Text Details */}
+              <div className="text-xs text-text-muted space-y-2 leading-relaxed">
+                {resetConfirmState.account?.provider === "codex" ? (
+                  resetConfirmState.resetCreditCount > 0 ? (
+                    <div className="text-amber-700 dark:text-amber-300 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 space-y-1">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[16px]">bolt</span>
+                        1 Codex Reset-Credit wird eingelöst
+                      </p>
+                      <p className="text-[11px] text-text-muted">
+                        Dieser Vorgang setzt das wöchentliche und 5h-Limit bei OpenAI sofort zurück. Dies kann nicht rückgängig gemacht werden!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-rose-600 dark:text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 space-y-1">
+                      <p className="font-semibold">Keine Reset-Credits verfügbar</p>
+                      <p className="text-[11px] text-text-muted">
+                        PiRouter hebt lokale Modell-Locks auf und erzwingt einen frischen Quota-Abruf.
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <div className="text-amber-700 dark:text-amber-300 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                      Modell-Locks und Cache werden zurückgesetzt
+                    </p>
+                    <p className="text-[11px] text-text-muted">
+                      Alle aktiven Sperren für {resetConfirmState.account?.name} auf PiRouter werden sofort aufgehoben und die Quotas neu abgefragt.
+                    </p>
+                  </div>
+                )}
+                <p className="text-[11px] text-text-muted/90 pt-1">
+                  Möchtest du fortfahren?
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-3.5 bg-surface-2/40">
+              <button
+                type="button"
+                onClick={() => setResetConfirmState(null)}
+                disabled={Boolean(resettingId)}
+                className="px-3.5 py-1.5 rounded-xl border border-border text-xs font-medium text-text-muted hover:text-text-main hover:bg-surface-3 transition-colors disabled:opacity-40"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExecuteReset(resetConfirmState.account)}
+                disabled={Boolean(resettingId)}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition-all shadow-xs disabled:opacity-60"
+              >
+                {resettingId ? (
+                  <>
+                    <span className="material-symbols-outlined text-[15px] animate-spin">
+                      progress_activity
+                    </span>
+                    <span>Wird zurückgesetzt...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[15px]">
+                      restart_alt
+                    </span>
+                    <span>Jetzt zurücksetzen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </Card>

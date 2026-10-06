@@ -5,6 +5,8 @@ import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
+import { getPaidTrafficDistribution, hydratePaidTraffic, isPaidModel } from "@/lib/jev/paidTrafficBalancer.js";
+import { getPricingForModel as getPricingForModelSync } from "open-sse/providers/pricing.js";
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
@@ -35,6 +37,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const currentMutex = selectionMutex;
   let resolveMutex;
   selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
+  await hydratePaidTraffic();
 
   try {
     await currentMutex;
@@ -147,8 +150,83 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     }
     if (connection) {
-      // skip strategy
-    } else if (strategy === "round-robin") {
+      // skip strategy (pinned by session stickiness)
+    } else {
+      // 1. Check if dynamic balancing is enabled for SELECTED accounts
+      const balancerAccounts = availableConnections.filter(
+        (c) => c.dynamicBalanceEnabled === true
+      );
+
+      if (balancerAccounts.length > 0) {
+        // Bias distribution to paid models only; Jev is driven by paid usage.
+        const modelIsPaid = model && isPaidModel(`${providerId}/${model}`, () => providerId, getPricingForModelSync);
+        // Only apply Jev distribution to paid models (exclude free models from balanced routing).
+        const distribution = modelIsPaid ? getPaidTrafficDistribution(providerId) : null;
+        const jevCandidates = balancerAccounts.filter((c) => Number(distribution?.[c.id]) > 0);
+        const totalJevWeight = jevCandidates.reduce((sum, c) => sum + Number(distribution[c.id]), 0);
+        if (totalJevWeight > 0) {
+          let pick = Math.random() * totalJevWeight;
+          connection = jevCandidates.find((candidate) => (pick -= Number(distribution[candidate.id])) <= 0) || jevCandidates[0];
+          log.info("AUTH", `${provider} | Jev traffic distribution pick: ${connection.id?.slice(0, 8)} | weight=${distribution[connection.id]}`);
+        }
+        if (!connection) {
+        // Only selected accounts participate in dynamic weighting
+        const activeBalancer = balancerAccounts.filter((c) => {
+          const w = c.weight !== undefined && c.weight !== null ? Number(c.weight) : (100 - (Number(c.throttlePercent) || 0));
+          return w > 0;
+        });
+        const candidates = activeBalancer.length > 0 ? activeBalancer : balancerAccounts;
+
+        const totalWeight = candidates.reduce((sum, c) => {
+          const w = c.weight !== undefined && c.weight !== null ? Number(c.weight) : (100 - (Number(c.throttlePercent) || 0));
+          return sum + Math.max(1, w);
+        }, 0);
+
+        let randomPick = Math.random() * totalWeight;
+        for (const cand of candidates) {
+          const w = cand.weight !== undefined && cand.weight !== null ? Number(cand.weight) : (100 - (Number(cand.throttlePercent) || 0));
+          randomPick -= Math.max(1, w);
+          if (randomPick <= 0) {
+            connection = cand;
+            break;
+          }
+        }
+        if (!connection) connection = candidates[0];
+
+        log.info(
+          "AUTH",
+          `${provider} | dynamic balancer pick: ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"}) | weight=${connection.weight ?? (100 - (connection.throttlePercent || 0))}`
+        );
+        }
+      } else if (availableConnections.some((c) => Number(c.throttlePercent || 0) > 0)) {
+        // 2. Standalone throttling fallback
+        const nonStandby = availableConnections.filter(
+          (c) => (Number(c.throttlePercent || 0)) < 100
+        );
+        const candidates = nonStandby.length > 0 ? nonStandby : availableConnections;
+
+        const totalWeight = candidates.reduce((sum, c) => {
+          const t = Math.max(0, Math.min(100, Number(c.throttlePercent) || 0));
+          return sum + Math.max(1, 100 - t);
+        }, 0);
+
+        let randomPick = Math.random() * totalWeight;
+        for (const cand of candidates) {
+          const t = Math.max(0, Math.min(100, Number(cand.throttlePercent) || 0));
+          const w = Math.max(1, 100 - t);
+          randomPick -= w;
+          if (randomPick <= 0) {
+            connection = cand;
+            break;
+          }
+        }
+        if (!connection) connection = candidates[0];
+
+        log.info(
+          "AUTH",
+          `${provider} | weighted throttle pick: ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"}) | throttle=${connection.throttlePercent || 0}%`
+        );
+      } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
@@ -190,6 +268,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)
       connection = availableConnections[0];
+    }
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
@@ -333,6 +412,27 @@ export async function clearAccountError(connectionId, currentConnection, model =
     });
   }
 
+  await updateProviderConnection(connectionId, clearObj);
+}
+
+/**
+ * Force clear all model locks and error states for a connection (e.g. after manual rate limit reset)
+ */
+export async function clearConnectionLocks(connectionId) {
+  if (!connectionId) return;
+  const connections = await getProviderConnections({});
+  const conn = connections.find((c) => c.id === connectionId);
+  if (!conn) return;
+
+  const allLockKeys = Object.keys(conn).filter((k) => k.startsWith("modelLock_"));
+  const clearObj = Object.fromEntries(allLockKeys.map((k) => [k, null]));
+  Object.assign(clearObj, {
+    testStatus: "active",
+    lastError: null,
+    errorCode: null,
+    lastErrorAt: null,
+    backoffLevel: 0,
+  });
   await updateProviderConnection(connectionId, clearObj);
 }
 

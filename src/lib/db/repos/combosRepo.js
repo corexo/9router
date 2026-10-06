@@ -27,8 +27,9 @@ export async function getComboById(id) {
 }
 
 export async function getComboByName(name) {
+  if (!name) return null;
   const db = await getAdapter();
-  const row = db.get(`SELECT * FROM combos WHERE name = ?`, [name]);
+  const row = db.get(`SELECT * FROM combos WHERE LOWER(name) = LOWER(?)`, [name]);
   return rowToCombo(row);
 }
 

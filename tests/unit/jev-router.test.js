@@ -26,10 +26,22 @@ describe("Jev router", () => {
     expect(Object.keys(body.questions.target_model.criteria)).toEqual(["openai/gpt-4o"]);
   });
 
+  it("filters GPT-5.4 Codex aliases from Jev candidates", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: { target_model: { selected: "glm/glm-5" } } }) }));
+    const selected = await selectJevModel({ input: "hi" }, ["cx/gpt-5.4", "cx/gpt-5.4-review", "cx/gpt-5.5", "glm/glm-5"], {
+      apiKey: "k", fetch: fetchMock,
+    });
+    expect(selected).toBe("glm/glm-5");
+    const criteria = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.criteria;
+    expect(criteria).not.toHaveProperty("cx/gpt-5.4");
+    expect(criteria).not.toHaveProperty("cx/gpt-5.4-review");
+    expect(criteria).toHaveProperty("cx/gpt-5.5");
+  });
+
   it("falls back without API call when key is missing", async () => {
     process.env.JEV_ROUTER_DEFAULT_MODEL = "anthropic/claude";
     const fetchMock = vi.fn();
-    expect(await selectJevModel({}, ["openai/gpt-4o"], { fetch: fetchMock, warn: vi.fn() })).toBe("anthropic/claude");
+    expect(await selectJevModel({}, ["openai/gpt-4o"], { fetch: fetchMock, warn: vi.fn() })).toBe("openai/gpt-4o");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -61,7 +73,7 @@ describe("Jev router", () => {
       apiKey: "ui-key", defaultModel: "ui/model", timeoutMs: 50, fetch: fetchMock, warn: vi.fn(),
     });
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer ui-key");
-    expect(selected).toBe("ui/model");
+    expect(selected).toBe("openai/gpt-4o");
   });
 
   it("rejects unavailable selections", async () => {
@@ -104,11 +116,40 @@ describe("Jev router", () => {
     await selectJevModel({ input: "hi" }, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, tierPreference: "max" });
     const withHint = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.instructions;
     expect(withHint).toContain("Which model should handle this coding-agent request best?");
-    expect(withHint).toContain("User preference: maximum quality");
+    expect(withHint).toContain("strongly prefer FRONTIER models");
+    expect(withHint).toContain("all model tiers remain available");
 
     await selectJevModel({ input: "hi" }, ["openai/gpt-4o"], { apiKey: "k", fetch: fetchMock, tierPreference: "balanced" });
     const balanced = JSON.parse(fetchMock.mock.calls[1][1].body).questions.target_model.instructions;
     expect(balanced).not.toContain("User preference");
+  });
+
+  it("removes all tier guidance when distribution is disabled", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ answers: { target_model: "custom/model" } }) }));
+    await selectJevModel({ input: "hi" }, ["custom/model"], {
+      apiKey: "k", fetch: fetchMock, tierPreference: "max", tierDistributionEnabled: false,
+      enrichCriteria: true,
+      getPricingForModel: () => null, getModelHealth: async () => ({}), getProviderConnections: async () => [], getUsageStats: async () => ({ byModel: {}, byProvider: {} }),
+    });
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model;
+    expect(Object.keys(sent.criteria)).toEqual(["custom/model"]);
+    expect(sent.criteria["custom/model"]).not.toMatch(/tier|frontier|strong|fast|mid/i);
+    expect(sent.instructions).not.toMatch(/tier|frontier|strong|fast|mid/i);
+  });
+
+  it("handles async pricing and incomplete prices without falling back to the first GPT model", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ results: { target_model: { selected: "glm/glm-5" } } }) }));
+    const selected = await selectJevModel({ input: "hi" }, ["cx/gpt-5.5", "glm/glm-5"], {
+      apiKey: "k", fetch: fetchMock, enrichCriteria: true,
+      getPricingForModel: async (provider) => provider === "codex" ? { input: 3 } : { input: 1, output: 2 },
+      providerFromModelId: (id) => id.startsWith("cx/") ? "codex" : "glm",
+      getModelHealth: async () => ({}), getProviderConnections: async () => [],
+      getUsageStats: async () => ({ byModel: {}, byProvider: {} }),
+    });
+    expect(selected).toBe("glm/glm-5");
+    const criteria = JSON.parse(fetchMock.mock.calls[0][1].body).questions.target_model.criteria;
+    expect(criteria["cx/gpt-5.5"]).toContain("Subscription/flat-rate");
+    expect(criteria["glm/glm-5"]).toContain("$1.00/1M in, $2.00/1M out");
   });
 
   it("marks the previous model as sticky in enriched criteria", async () => {

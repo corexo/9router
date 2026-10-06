@@ -1698,7 +1698,7 @@ export default function ProfilePage() {
                 />
               </div>
               <p className="text-xs sm:text-sm text-text-muted">
-                Begrenzt, aus welchen Modell-Tiers Jev bei jeder Anfrage wählen darf. Gilt auch im Cockpit.
+                Beeinflusst Jevs Präferenz für Modell-Tiers. Entfernt keine Modelle aus dem verfügbaren Pool. Gilt auch im Cockpit.
               </p>
             </div>
             <div className="flex items-center justify-between p-3 rounded-lg bg-surface-2/40 border border-border/60">

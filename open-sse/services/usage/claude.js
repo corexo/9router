@@ -126,9 +126,18 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
         }
       }
 
+      const availableResetCredits = Math.max(0,
+        Number(data.rate_limit_reset_credits?.available_count) ||
+        Number(data.reset_credits?.available_count) ||
+        Number(data.resets_available) ||
+        (data.extra_usage?.has_free_reset ? 1 : 0) ||
+        0
+      );
+
       return {
         plan: "Claude Code",
         extraUsage: data.extra_usage ?? null,
+        resetCredits: { availableCount: availableResetCredits },
         quotas,
       };
     }
@@ -196,4 +205,9 @@ async function getClaudeUsageLegacy(accessToken, proxyOptions = null) {
   } catch (error) {
     return { message: `Claude connected. Unable to fetch usage: ${error.message}` };
   }
+}
+
+export function clearClaudeUsageCache(accessToken) {
+  if (accessToken) usageCache.delete(accessToken);
+  else usageCache.clear();
 }

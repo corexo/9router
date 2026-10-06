@@ -93,6 +93,7 @@ const BUILTIN_COMBOS = {
 };
 
 export async function getComboModels(modelStr) {
+  if (!modelStr || typeof modelStr !== "string") return null;
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 

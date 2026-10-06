@@ -73,10 +73,10 @@ const CJK_RE = /[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uff
  * else ~4 chars/token — the plain chars/4 rule underestimates Chinese/Japanese by up to
  * 4x, which is exactly when a tier decision matters.
  */
-export function estimateQoderPromptTokens({ system, messages, tools } = {}) {
+export function estimateQoderPromptTokens({ system, messages, input, tools } = {}) {
   let text = "";
   try {
-    text = JSON.stringify({ system: system || "", messages: messages || [], tools: tools || [] }) || "";
+    text = JSON.stringify({ system: system || "", messages: messages || [], input: input || [], tools: tools || [] }) || "";
   } catch {
     return 0;
   }

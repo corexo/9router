@@ -1,10 +1,11 @@
 services:
   9router:
-    image: decolua/9router:latest
+    image: 9router:latest
+    build: .
     container_name: 9router
-    restart: always
+    restart: unless-stopped
     ports:
-      - "20128:20128"
+      - "9310:20128"
     volumes:
       - 9router-data:/app/data
     env_file:
@@ -20,11 +21,12 @@ services:
 
   headroom:
     image: ghcr.io/chopratejas/headroom:latest
-    container_name: headroom
-    restart: always
+    container_name: 9router-headroom
+    restart: unless-stopped
     ports:
       - "8787:8787"
 
 volumes:
   9router-data:
     name: 9router-data
+    external: true

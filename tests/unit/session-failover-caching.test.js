@@ -52,6 +52,15 @@ describe("Session Provider Failover & Caching Circuit Breaker", () => {
     expect(penalizedSet.has("codex")).toBe(true);
   });
 
+  it("penalizes a quota-exhausted provider on the first failure", () => {
+    const sessKey = sessionKey(dummyBody);
+
+    const result = recordSessionProviderFailure(sessKey, "gemini", 1);
+
+    expect(result.triggered).toBe(true);
+    expect(isSessionProviderPenalized(sessKey, "gemini")).toBe(true);
+  });
+
   it("resets failure counter on request success", () => {
     const sessKey = sessionKey(dummyBody);
     recordSessionProviderFailure(sessKey, "codex", 2);
