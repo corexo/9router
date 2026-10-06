@@ -170,21 +170,15 @@ do_deploy() {
   fi
   log_ok "Docker build succeeded."
 
-  # 3. Local Smoke Test (Run temporary container on high port)
-  local smoke_port=""
-  local candidate
-  for candidate in 20999 21000 21001 21002 21003; do
-    if ! ss -ltn "( sport = :$candidate )" | grep -q LISTEN; then smoke_port="$candidate"; break; fi
-  done
-  [[ -n "$smoke_port" ]] || { log_err "No free smoke-test port"; exit 1; }
+  # 3. Local Smoke Test (container-internal: avoids host port binding conflicts)
   trap 'if [[ -n "$smoke_cid" ]]; then docker rm -f "$smoke_cid" >/dev/null 2>&1 || true; fi' EXIT INT TERM
   log_info "Running local smoke test on container..."
-  smoke_cid=$(docker run -d --rm -p "${smoke_port}:20128" -e NODE_ENV=production "${image_tag}")
-  
+  smoke_cid=$(docker run -d --rm -e NODE_ENV=production "${image_tag}")
+
   local smoke_passed=0
   for ((i=1; i<=15; i++)); do
     local res
-    res=$(curl -s --max-time 2 "http://127.0.0.1:${smoke_port}/api/health" || true)
+    res=$(docker exec "$smoke_cid" node -e "fetch('http://127.0.0.1:20128/api/health').then(async r => { const body = await r.text(); if (r.status === 200) process.stdout.write(body); else process.exit(1); }).catch(() => process.exit(1))" 2>/dev/null || true)
     if [[ "$res" == *"\"ok\":true"* ]]; then
       smoke_passed=1
       break
