@@ -853,7 +853,7 @@ function buildJevSeries(rows, days) {
   const buckets = new Map();
   for (let i = days - 1; i >= 0; i--) {
     const key = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-    buckets.set(key, { date: key, requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, latencySum: 0, latencyCount: 0 });
+    buckets.set(key, { date: key, requests: 0, success: 0, fallbacks: 0, credits: 0, tokens: 0, promptTokens: 0, completionTokens: 0, latencySum: 0, latencyCount: 0 });
   }
   for (const row of rows) {
     const key = String(row.timestamp).slice(0, 10);
@@ -865,6 +865,8 @@ function buildJevSeries(rows, days) {
     else bucket.fallbacks += 1;
     bucket.credits += Number(row.cost) || 0;
     bucket.tokens += Number(meta.tokens ?? 0);
+    bucket.promptTokens += Number(meta.promptTokens ?? 0);
+    bucket.completionTokens += Number(meta.completionTokens ?? 0);
     if (typeof meta.latencyMs === "number") { bucket.latencySum += meta.latencyMs; bucket.latencyCount += 1; }
   }
   return [...buckets.values()].map((bucket) => ({
@@ -874,6 +876,8 @@ function buildJevSeries(rows, days) {
     fallbacks: bucket.fallbacks,
     credits: Number(bucket.credits.toFixed(8)),
     tokens: bucket.tokens,
+    promptTokens: bucket.promptTokens,
+    completionTokens: bucket.completionTokens,
     avgLatencyMs: bucket.latencyCount ? Math.round(bucket.latencySum / bucket.latencyCount) : 0,
   }));
 }

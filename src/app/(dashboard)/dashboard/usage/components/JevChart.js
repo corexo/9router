@@ -10,6 +10,7 @@ const VIEWS = [
   { value: "credits", label: "Credits" },
   { value: "latency", label: "Latency" },
   { value: "models", label: "Models" },
+  { value: "tokens", label: "Tokens in/out" },
 ];
 
 export default function JevChart({ period = "7d" }) {
@@ -26,7 +27,7 @@ export default function JevChart({ period = "7d" }) {
   }, [period]);
 
   useEffect(() => {
-    fetchStats();
+    queueMicrotask(fetchStats);
   }, [fetchStats]);
 
   if (!stats || stats.requests === 0) return null;
@@ -38,7 +39,7 @@ export default function JevChart({ period = "7d" }) {
     <Card className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-semibold">Jev API Usage</h3>
-        <div className="grid grid-cols-4 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1">
+        <div className="grid grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1">
           {VIEWS.map((option) => (
             <button
               key={option.value}
@@ -50,6 +51,14 @@ export default function JevChart({ period = "7d" }) {
           ))}
         </div>
       </div>
+
+      {view === "tokens" && (
+        <div className="flex flex-wrap gap-4 text-sm">
+          <p className="text-text-muted">Input: <strong className="font-mono text-text-main">{Number(stats.promptTokens || 0).toLocaleString()}</strong></p>
+          <p className="text-text-muted">Output: <strong className="font-mono text-text-main">{Number(stats.completionTokens || 0).toLocaleString()}</strong></p>
+          <p className="text-text-muted">Total: <strong className="font-mono text-text-main">{Number(stats.tokens || 0).toLocaleString()}</strong></p>
+        </div>
+      )}
 
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -79,6 +88,12 @@ export default function JevChart({ period = "7d" }) {
               )}
               {view === "latency" && (
                 <Area type="monotone" dataKey="avgLatencyMs" name="Avg latency (ms)" stroke="#0ea5e9" fill="#0ea5e9" fillOpacity={0.25} />
+              )}
+              {view === "tokens" && (
+                <>
+                  <Area type="monotone" dataKey="promptTokens" name="Input tokens" stroke="#0ea5e9" fill="#0ea5e9" fillOpacity={0.25} />
+                  <Area type="monotone" dataKey="completionTokens" name="Output tokens" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.25} />
+                </>
               )}
             </AreaChart>
           )}

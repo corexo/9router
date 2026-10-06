@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { JEV_API_URL, JEV_MODEL, estimateTextTokens, extractTokens, getJevApiKey, recordJevUsage } from "@/lib/jev/client.js";
+import { JEV_API_URL, JEV_MODEL, extractTokenUsage, getJevApiKey, recordJevUsage } from "@/lib/jev/client.js";
 import { getSettings } from "@/lib/db/repos/settingsRepo.js";
+import { extractApiKey } from "@/sse/services/auth.js";
 
 // Proxy calls carry full diffs and free-form questions, so they need more room
 // than the 1200 ms budget used for inline model routing inside a chat request.
@@ -58,17 +59,18 @@ export async function POST(request) {
     // Jev's SystemOne API never returns a usage field, so extractTokens is a real-usage
     // fast path (currently always 0) with an estimated char-length fallback so the
     // dashboard shows non-zero, roughly-accurate in/out token counts.
-    const realTokens = extractTokens(data);
+    const tokenUsage = extractTokenUsage(data, requestBody, text);
 
     recordJevUsage({
       endpoint: "/v1/jev-api",
+      apiKey: extractApiKey(request),
       caller,
       questionType,
       status: upstream.ok ? "success" : "error",
       httpStatus: upstream.status,
       latencyMs,
-      promptTokens: realTokens || estimateTextTokens(requestBody),
-      completionTokens: realTokens ? 0 : estimateTextTokens(text),
+      promptTokens: tokenUsage.promptTokens,
+      completionTokens: tokenUsage.completionTokens,
       choice: firstAnswer(data),
       fallbackReason: upstream.ok ? undefined : `HTTP ${upstream.status}`,
     });
@@ -81,11 +83,13 @@ export async function POST(request) {
     const aborted = error?.name === "AbortError";
     recordJevUsage({
       endpoint: "/v1/jev-api",
+      apiKey: extractApiKey(request),
       caller,
       questionType,
       status: "error",
       latencyMs: Date.now() - started,
       promptTokens: estimateTextTokens(requestBody),
+      completionTokens: 0,
       fallbackReason: aborted ? "timeout" : `network: ${error?.message || error}`,
     });
     return NextResponse.json({ error: aborted ? "Jev API timeout" : "Jev API unreachable" }, { status: 504 });

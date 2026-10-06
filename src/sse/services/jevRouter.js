@@ -1,4 +1,4 @@
-import { estimateTextTokens, extractTokens as extractJevTokens, recordJevUsage } from "@/lib/jev/client.js";
+import { estimateTextTokens, extractTokenUsage, recordJevUsage } from "@/lib/jev/client.js";
 import { logJevRequest, patchJevTrace, updateLastJevRequest } from "@/lib/jev/requestLog.js";
 import { getSessionModel, sessionKey, setSessionModel, isSessionProviderPenalized } from "@/lib/jev/sessionModels.js";
 import { getCachedJevDecision, setCachedJevDecision } from "@/lib/jev/decisionCache.js";
@@ -320,6 +320,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
       patchTrace({ cachedModel: cached.model, cached: true });
       recordJevUsage({
         endpoint: "model-router",
+        apiKey: options.usageApiKey || null,
         caller: options.caller || "model-router",
         questionType: "choice",
         status: "cached",
@@ -344,6 +345,7 @@ export async function selectJevModel(body, availableModels, options = {}) {
   const jevStarted = Date.now();
   const logUsage = (result) => recordJevUsage({
     endpoint: "model-router",
+    apiKey: options.usageApiKey || null,
     caller: options.caller || "model-router",
     questionType: "choice",
     status: result.status,
@@ -426,15 +428,13 @@ export async function selectJevModel(body, availableModels, options = {}) {
     });
     const data = safeParseJson(rawText);
     const selected = pickAnswer(data, MODEL_QUESTION_ID);
-    // Jev's SystemOne API never returns a usage field (extractJevTokens is a real-usage
-    // fast path, currently always 0); fall back to estimating from actual payload sizes
-    // so the dashboard shows non-zero, roughly-accurate in/out token counts.
-    const realTokens = extractJevTokens(data);
+    // SystemOne often omits separate usage details; estimate input/output independently in that case.
+    const tokenUsage = extractTokenUsage(data, requestBody, rawText);
     logUsage({
       status: "success",
       httpStatus: response.status,
-      promptTokens: realTokens || estimateTextTokens(requestBody),
-      completionTokens: realTokens ? 0 : estimateTextTokens(rawText),
+      promptTokens: tokenUsage.promptTokens,
+      completionTokens: tokenUsage.completionTokens,
       choice: typeof selected === "string" ? selected : undefined,
     });
     if (options.paidTrafficDistribution) {

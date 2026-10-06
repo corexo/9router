@@ -330,6 +330,7 @@ export async function handleChat(request, clientRawRequest = null) {
       traceId: jevTraceId,
       bigContext: isJev1m,
       apiKey: settings.jevApiKey,
+      usageApiKey: apiKey || null,
       defaultModel: settings.jevDefaultModel,
       timeoutMs: settings.jevTimeoutMs,
       cacheJevTtlMs: isJevFree ? 0 : settings.cacheJevTtlMs, // no cache for one-shot subagent tasks

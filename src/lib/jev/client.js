@@ -32,6 +32,16 @@ export function estimateTextTokens(value) {
   return Math.ceil(text.length / 4);
 }
 
+export function extractTokenUsage(data, promptText, completionText) {
+  const usage = data?.usage || data?.meta?.usage || {};
+  const input = usage.prompt_tokens ?? usage.input_tokens;
+  const output = usage.completion_tokens ?? usage.output_tokens;
+  return {
+    promptTokens: Number.isFinite(Number(input)) && input != null ? Number(input) : estimateTextTokens(promptText),
+    completionTokens: Number.isFinite(Number(output)) && output != null ? Number(output) : estimateTextTokens(completionText),
+  };
+}
+
 /**
  * Fire-and-forget usage record. Never throws, never blocks the caller.
  * saveRequestUsage recalculates entry.cost from pricing, so credits ride in meta.
@@ -47,6 +57,7 @@ export function recordJevUsage(entry) {
         provider: JEV_PROVIDER,
         model: JEV_MODEL,
         endpoint: entry.endpoint,
+        apiKey: entry.apiKey || null,
         status: entry.status,
         cost: credits,
         tokens: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens },
