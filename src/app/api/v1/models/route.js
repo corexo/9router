@@ -614,7 +614,8 @@ export async function buildModelsList(kindFilter, options = {}) {
   const seenModelIds = new Set();
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
-    if (permanentlyBlocked.has(model.id)) continue;
+    // Virtual router aliases are service endpoints, not upstream model IDs; provider health must never hide them.
+    if (model.owned_by !== "9router" && permanentlyBlocked.has(model.id)) continue;
     seenModelIds.add(model.id);
     dedupedModels.push(model);
   }
