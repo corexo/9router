@@ -27,7 +27,7 @@ export async function getApiKeys() {
   const db = await getAdapter();
   const rows = db.all(`
     SELECT 
-      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.lastUsedIp, k.lastUsedAt,
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.ownerUsername, k.lastUsedIp, k.lastUsedAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
       COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,
@@ -57,7 +57,7 @@ export async function getApiKeyById(id) {
   const db = await getAdapter();
   const row = db.get(`
     SELECT 
-      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.lastUsedIp, k.lastUsedAt,
+      k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt, k.ownerUsername, k.lastUsedIp, k.lastUsedAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
       COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,

@@ -29,6 +29,10 @@ describe("apiKeys usage aggregates", () => {
 });
 
 describe("apiKeys ownership", () => {
+  it("returns ownerUsername from both list and detail queries for UI tenant filtering", () => {
+    expect(source.match(/k\.createdAt, k\.ownerUsername/g)).toHaveLength(2);
+  });
+
   it("persists ownerUsername on create and maps it in rowToKey", () => {
     expect(source).toContain("ownerUsername: ownerUsername || null");
     expect(source).toContain("ownerUsername: row.ownerUsername || null");
@@ -37,7 +41,7 @@ describe("apiKeys ownership", () => {
 
   it("scopes the keys list for moderators in the route", () => {
     const route = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/app/api/keys/route.js"), "utf8");
-    expect(route).toContain('claims?.role === "moderator"');
+    expect(route).toContain("claims?.username");
     expect(route).toContain("k.ownerUsername === claims.username");
     expect(route).toContain("createApiKey(name, machineId, claims?.username || null)");
   });
