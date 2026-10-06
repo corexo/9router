@@ -11,6 +11,7 @@ function rowToKey(row) {
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt || today,
+    ownerUsername: row.ownerUsername || null,
     lastUsed: row.lastUsed || null,
     requestsToday: Number(row.requestsToday || 0),
     totalRequests: Number(row.totalRequests || 0),
@@ -80,7 +81,7 @@ export async function getApiKeyById(id) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId) {
+export async function createApiKey(name, machineId, ownerUsername = null) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
@@ -92,10 +93,11 @@ export async function createApiKey(name, machineId) {
     machineId,
     isActive: true,
     createdAt: new Date().toISOString(),
+    ownerUsername: ownerUsername || null,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, ownerUsername) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.ownerUsername]
   );
   return apiKey;
 }

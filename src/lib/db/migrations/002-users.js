@@ -10,6 +10,8 @@ const migration = {
       isActive INTEGER NOT NULL DEFAULT 1,
       createdAt TEXT NOT NULL
     )`);
+    // Ownership of API keys by dashboard user (nullable = unassigned/legacy).
+    db.exec(`ALTER TABLE apiKeys ADD COLUMN ownerUsername TEXT`);
   },
 };
 

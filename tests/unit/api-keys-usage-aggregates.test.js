@@ -21,3 +21,23 @@ describe("apiKeys usage aggregates", () => {
     expect(source).toContain("totalCost: Number(row.totalCost || 0)");
   });
 });
+
+describe("apiKeys ownership", () => {
+  it("persists ownerUsername on create and maps it in rowToKey", () => {
+    expect(source).toContain("ownerUsername: ownerUsername || null");
+    expect(source).toContain("ownerUsername: row.ownerUsername || null");
+    expect(source).toContain("isActive, createdAt, ownerUsername)");
+  });
+
+  it("scopes the keys list for moderators in the route", () => {
+    const route = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/app/api/keys/route.js"), "utf8");
+    expect(route).toContain('claims?.role === "moderator"');
+    expect(route).toContain("k.ownerUsername === claims.username");
+    expect(route).toContain("createApiKey(name, machineId, claims?.username || null)");
+  });
+
+  it("migration adds the ownerUsername column", () => {
+    const migration = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/lib/db/migrations/002-users.js"), "utf8");
+    expect(migration).toContain("ALTER TABLE apiKeys ADD COLUMN ownerUsername TEXT");
+  });
+});
