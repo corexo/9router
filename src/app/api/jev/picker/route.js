@@ -57,18 +57,13 @@ export async function GET(request) {
       .map((item) => item.id));
     const configuredPool = Array.isArray(settings.jevPoolModels) ? settings.jevPoolModels : [];
     const basePool = [...new Set(tenant ? [...activeIds, ...configuredPool.filter((id) => activeIds.has(id))] : [...activeIds, ...configuredPool])].filter((id) => typeof id === "string" && id.includes("/") && !["jev", "jev-1m", "jev-free"].includes(id.split("/").at(-1)));
-    const tenantPoolModels = new Set([
-      ...connections.flatMap((connection) => connection.models || connection.data?.models || []),
-      ...combos.flatMap((combo) => combo.models || []),
-    ].map((model) => typeof model === "string" ? model : model?.id).filter(Boolean));
-    const tenantVisible = (id) => !tenant || tenantPoolModels.has(id) || tenantPoolModels.has(id.split("/").slice(-1)[0]);
     const localModels = new Set((localCombo?.models || []).map((item) => String(item).toLowerCase()));
     const unavailableCanonical = new Set([...unavailable].map((id) => {
       const slash = id.indexOf("/");
       return slash < 0 ? id : `${providerFromModelId(id)}/${id.slice(slash + 1)}`;
     }));
     const minContext = Number(settings.jev1mMinContext) || 200000;
-    const rows = basePool.filter(tenantVisible).map((id) => {
+    const rows = basePool.map((id) => {
       const [alias, ...rest] = id.split("/");
       const model = rest.join("/");
       const provider = providerFromModelId(id);
