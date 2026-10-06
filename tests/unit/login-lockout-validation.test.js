@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
+  hasUsers: vi.fn(),
   isLocalRequest: vi.fn(),
   setDashboardAuthCookie: vi.fn(),
 }));
@@ -23,7 +24,7 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ set: vi.fn(), delete: vi.fn() })),
 }));
 
-vi.mock("@/lib/localDb", () => ({ getSettings: mocks.getSettings }));
+vi.mock("@/lib/localDb", () => ({ getSettings: mocks.getSettings, hasUsers: mocks.hasUsers }));
 vi.mock("@/dashboardGuard", () => ({ isLocalRequest: mocks.isLocalRequest }));
 vi.mock("@/lib/auth/dashboardSession", () => ({ setDashboardAuthCookie: mocks.setDashboardAuthCookie }));
 vi.mock("@/lib/auth/oidc", () => ({ isOidcConfigured: () => false }));
@@ -52,6 +53,7 @@ beforeEach(() => {
   delete process.env.INITIAL_PASSWORD;
   delete process.env.TRUST_PROXY;
   mocks.getSettings.mockResolvedValue({ password: HASH });
+  mocks.hasUsers.mockResolvedValue(false);
   mocks.isLocalRequest.mockReturnValue(true);
 });
 

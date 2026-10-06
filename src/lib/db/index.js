@@ -32,6 +32,12 @@ export {
   getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
+// Dashboard users
+export {
+  getUserByUsername, listUsers, hasActiveUsers, hasUsers, createUser, verifyLogin,
+  setUserActive, deleteUser, setPasswordHash,
+} from "./repos/usersRepo.js";
+
 // Combos
 export {
   getCombos, getComboById, getComboByName, ensureBuiltinCombos, BUILTIN_COMBOS,

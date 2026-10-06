@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -19,6 +19,16 @@ PRAGMA busy_timeout = 5000;
 // auto-add missing tables/columns/indexes after versioned migrations.
 // For destructive changes (drop/rename/type-change), write a migration file.
 export const TABLES = {
+  users: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      username: "TEXT NOT NULL UNIQUE COLLATE NOCASE",
+      passwordHash: "TEXT NOT NULL",
+      role: "TEXT NOT NULL DEFAULT 'moderator' CHECK(role IN ('admin', 'moderator'))",
+      isActive: "INTEGER NOT NULL DEFAULT 1",
+      createdAt: "TEXT NOT NULL",
+    },
+  },
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",

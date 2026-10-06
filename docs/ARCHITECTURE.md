@@ -32,6 +32,10 @@ Primary runtime model:
 
 Pi's `before_provider_request` hook sends optional top-level `pi_project_path` only to locally configured PiRouter `/v1` models. `src/sse/handlers/chat.js` removes it from the parsed body before Jev traces, session identity, routing, request logs, translation and upstream forwarding. The cache-session observability entry keeps a validated display-only copy (up to 1024 characters, no control characters); it never participates in session IDs, routing decisions or cache keys. `/api/usage/cache-sessions?cockpit=true` includes `piProjectPath` for the authenticated Cockpit card. The default session-list response omits it. The path remains local dashboard data and expires with the cache-session entry (2h inactivity); do not use this metadata for authorization or remote providers.
 
+## Multi-user dashboard auth
+
+SQLite `users` stores case-insensitive usernames, bcrypt password hashes, admin/moderator roles and active state. Create accounts with `node scripts/manage-users.mjs add <name> <password> <admin|moderator>` (`DATA_DIR` selects the installation). Once any account exists, the legacy shared password no longer logs in, even if all accounts are disabled; without accounts the existing password flow remains available. `/api/auth/status` returns `hasUsers` for the login form. JWTs carry `sub`, `username`, and `role`; the dashboard guard checks active users on each protected request. Moderators can read dashboard APIs but cannot mutate them, except their own `/api/auth/change-password` (POST `{oldPassword,newPassword}`). CLI machine tokens retain their existing access; `/v1` API-key traffic is separate. `src/lib/db/paths.js` uses a relative import for the shared `DATA_DIR` resolver so the repository's user-management script can run in plain Node without Next.js aliases.
+
 ## Scope and Boundaries
 
 ### In Scope

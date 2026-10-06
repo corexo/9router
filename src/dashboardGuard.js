@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSettings, validateApiKey } from "@/lib/localDb";
+import { getSettings, validateApiKey, hasUsers, getUserByUsername } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { hasTrustedPeerHeaders } from "@/lib/auth/trustedPeer";
@@ -32,7 +32,6 @@ const PUBLIC_API_PATHS = [
   "/api/auth/oidc",
   "/api/auth/saml",
   "/api/version",
-  "/api/settings/require-login",
 ];
 
 // Public top-level prefixes (LLM API endpoints with their own API key auth).
@@ -170,7 +169,20 @@ async function canAccessLocalOnlyRoute(request) {
 
 async function hasValidToken(request) {
   const token = request.cookies.get("auth_token")?.value;
-  return await verifyDashboardAuthToken(token);
+  const claims = await verifyDashboardAuthToken(token);
+  if (!claims) return false;
+  if (await hasUsers()) {
+    if (!claims.sub || !claims.username || !claims.role) return false;
+    const user = await getUserByUsername(claims.username);
+    if (!user || user.id !== claims.sub || !user.isActive || user.role !== claims.role) return false;
+  }
+  return claims;
+}
+
+export function isModeratorWrite(request, claims) {
+  return claims?.role === "moderator" && request.method !== "GET" && request.method !== "HEAD" &&
+    request.nextUrl.pathname !== "/api/auth/change-password" &&
+    request.nextUrl.pathname !== "/api/auth/logout";
 }
 
 // Read settings directly from DB to avoid self-fetch deadlock in proxy
@@ -185,7 +197,7 @@ async function loadSettings() {
 async function isAuthenticated(request) {
   if (await hasValidToken(request)) return true;
   const settings = await loadSettings();
-  if (settings && settings.requireLogin === false) return true;
+  if (settings && settings.requireLogin === false && !(await hasUsers())) return true;
   return false;
 }
 
@@ -214,7 +226,10 @@ export async function proxy(request) {
 
   // Always protected - require valid JWT or local CLI token (machineId-based)
   if (ALWAYS_PROTECTED.some((p) => pathname.startsWith(p))) {
-    if (await hasValidCliToken(request) || await hasValidToken(request))
+    const claims = await hasValidToken(request);
+    if (isModeratorWrite(request, claims))
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (await hasValidCliToken(request) || claims)
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -226,8 +241,18 @@ export async function proxy(request) {
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
-    if (isPublicApi(pathname)) return NextResponse.next();
-    if (await hasValidCliToken(request) || await isAuthenticated(request))
+    if (pathname === "/api/auth/change-password") {
+      return await hasValidToken(request) ? NextResponse.next() : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (isPublicApi(pathname)) {
+      if (pathname === "/api/auth/reset-password" && (await hasValidToken(request))?.role === "moderator")
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.next();
+    }
+    const claims = await hasValidToken(request);
+    if (isModeratorWrite(request, claims))
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (await hasValidCliToken(request) || claims || await isAuthenticated(request))
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -258,12 +283,12 @@ export async function proxy(request) {
     }
 
     // If login not required, allow through
-    if (!requireLogin) return NextResponse.next();
+    if (!requireLogin && !(await hasUsers())) return NextResponse.next();
 
     // Verify JWT token
     const token = request.cookies.get("auth_token")?.value;
     if (token) {
-      if (await verifyDashboardAuthToken(token)) {
+      if (await hasValidToken(request)) {
         return NextResponse.next();
       } else {
         return NextResponse.redirect(new URL("/login", request.url));

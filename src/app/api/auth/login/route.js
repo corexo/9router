@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, hasUsers, verifyLogin } from "@/lib/localDb";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { setDashboardAuthCookie } from "@/lib/auth/dashboardSession";
@@ -29,7 +29,7 @@ export async function POST(request) {
       );
     }
 
-    const { password } = await request.json();
+    const { username, password } = await request.json();
     const settings = await getSettings();
 
     // Block login via tunnel/tailscale if dashboard access is disabled
@@ -50,10 +50,13 @@ export async function POST(request) {
       }
     }
 
-    let isValid = false;
-    if (storedHash) {
+    // An existing account disables the legacy password, even when every account is inactive.
+    const multiUser = await hasUsers();
+    const user = multiUser ? await verifyLogin(username, password) : null;
+    let isValid = !!user;
+    if (!multiUser && storedHash) {
       isValid = await bcrypt.compare(password, storedHash);
-    } else {
+    } else if (!multiUser) {
       // Use env var or default
       const initialPassword = process.env.INITIAL_PASSWORD || "123456";
       isValid = password === initialPassword;
@@ -65,7 +68,7 @@ export async function POST(request) {
       // Default password still in use on a remote client → force a password
       // change before the dashboard is exposed remotely (keeps local UX intact).
       const mustChangePassword =
-        !storedHash && !process.env.INITIAL_PASSWORD && !isLocalRequest(request);
+        !multiUser && !storedHash && !process.env.INITIAL_PASSWORD && !isLocalRequest(request);
 
       if (mustChangePassword) {
         // Do NOT issue a session token: a fresh install's default password is
@@ -88,7 +91,7 @@ export async function POST(request) {
       }
 
       const cookieStore = await cookies();
-      await setDashboardAuthCookie(cookieStore, request);
+      await setDashboardAuthCookie(cookieStore, request, user ? { sub: user.id, username: user.username, role: user.role } : {});
 
       return NextResponse.json({ success: true, mustChangePassword: false }, { headers: NO_STORE_HEADERS });
     }
