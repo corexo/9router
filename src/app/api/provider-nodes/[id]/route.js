@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
 import { deleteProviderConnectionsByProvider, deleteProviderNode, getProviderConnections, getProviderNodeById, updateProviderConnection, updateProviderNode } from "@/models";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 // PUT /api/provider-nodes/[id] - Update provider node
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const body = await request.json();
-    const { name, prefix, apiType, baseUrl } = body;
+    const caller = await getClaims();
     const node = await getProviderNodeById(id);
 
     if (!node) {
       return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
     }
+    if (caller?.role === "moderator" && node.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { name, prefix, apiType, baseUrl } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -84,10 +93,14 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
     const node = await getProviderNodeById(id);
 
     if (!node) {
       return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
+    }
+    if (caller?.role === "moderator" && node.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     await deleteProviderConnectionsByProvider(id);

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/usageDb";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, getProviderConnections } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 /**
  * GET /api/usage/request-details
@@ -47,6 +51,12 @@ export async function GET(request) {
     if (startDate) filter.startDate = startDate;
     if (endDate) filter.endDate = endDate;
     
+    const claims = await getClaims();
+    if (claims?.role === "moderator") {
+      const ownConnections = await getProviderConnections({ ownerUsername: claims.username });
+      filter.connectionIds = ownConnections.map((c) => c.id);
+    }
+
     const result = await getRequestDetails(filter);
 
     // Redact conversation payloads by default: the stored details include full

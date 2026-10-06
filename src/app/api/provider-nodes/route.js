@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { createProviderNode, getProviderNodes } from "@/models";
 import { OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX, CUSTOM_EMBEDDING_PREFIX } from "@/shared/constants/providers";
 import { generateId } from "@/shared/utils";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 
 export const dynamic = "force-dynamic";
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 const OPENAI_COMPATIBLE_DEFAULTS = {
   baseUrl: "https://api.openai.com/v1",
@@ -20,7 +23,8 @@ const CUSTOM_EMBEDDING_DEFAULTS = {
 // GET /api/provider-nodes - List all provider nodes
 export async function GET() {
   try {
-    const nodes = await getProviderNodes();
+    const caller = await getClaims();
+    const nodes = await getProviderNodes(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
     return NextResponse.json({ nodes });
   } catch (error) {
     console.log("Error fetching provider nodes:", error);
@@ -32,6 +36,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
+    const caller = await getClaims();
     const { name, prefix, apiType, baseUrl, type } = body;
 
     if (!name?.trim()) {
@@ -52,6 +57,7 @@ export async function POST(request) {
 
       const node = await createProviderNode({
         id: `${OPENAI_COMPATIBLE_PREFIX}${apiType}-${generateId()}`,
+        ownerUsername: caller?.username || null,
         type: "openai-compatible",
         prefix: prefix.trim(),
         apiType,

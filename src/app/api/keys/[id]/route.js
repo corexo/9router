@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
     const key = await getApiKeyById(id);
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
+    }
+    if (caller?.role === "moderator" && key.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     return NextResponse.json({ key });
   } catch (error) {
@@ -27,6 +35,10 @@ export async function PUT(request, { params }) {
     if (!existing) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
+    const caller = await getClaims();
+    if (caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
@@ -44,6 +56,11 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
+    const existing = await getApiKeyById(id);
+    if (caller?.role === "moderator" && existing?.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const deleted = await deleteApiKey(id);
     if (!deleted) {

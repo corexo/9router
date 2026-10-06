@@ -9,8 +9,11 @@ import {
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 
 export const dynamic = "force-dynamic";
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 function normalizeProxyConfig(body = {}) {
   const enabled = body?.connectionProxyEnabled === true;
@@ -49,7 +52,8 @@ async function normalizeProxyPoolId(proxyPoolId) {
 // GET /api/providers - List all connections
 export async function GET() {
   try {
-    const connections = await getProviderConnections();
+    const caller = await getClaims();
+    const connections = await getProviderConnections(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};
@@ -87,6 +91,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
+    const caller = await getClaims();
     const provider = normalizeProviderId(body.provider);
     const { apiKey, name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
     const proxyConfig = normalizeProxyConfig(body);
@@ -172,7 +177,7 @@ export async function POST(request) {
       mergedProviderSpecificData.proxyPoolId = proxyPoolId;
     }
 
-    const newConnection = await createProviderConnection({
+    const newConnection = await createProviderConnection({ ownerUsername: caller?.username || null,
       provider,
       authType: isWebCookieProvider ? "cookie" : "apikey",
       name: connectionName,

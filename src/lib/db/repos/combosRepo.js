@@ -11,12 +11,14 @@ function rowToCombo(row) {
     models: parseJson(row.models, []),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ownerUsername: row.ownerUsername || null,
   };
 }
 
-export async function getCombos() {
+export async function getCombos(filter = {}) {
   const db = await getAdapter();
-  const rows = db.all(`SELECT * FROM combos ORDER BY createdAt ASC`);
+  const params = filter.ownerUsername ? [filter.ownerUsername] : [];
+  const rows = db.all(`SELECT * FROM combos${params.length ? " WHERE ownerUsername = ?" : ""} ORDER BY createdAt ASC`, params);
   return rows.map(rowToCombo);
 }
 
@@ -38,6 +40,7 @@ export async function createCombo(data) {
   const now = new Date().toISOString();
   const combo = {
     id: uuidv4(),
+    ownerUsername: data.ownerUsername ?? null,
     name: data.name,
     kind: data.kind || null,
     models: data.models || [],
@@ -45,8 +48,8 @@ export async function createCombo(data) {
     updatedAt: now,
   };
   db.run(
-    `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
+    `INSERT INTO combos(id, name, kind, models, ownerUsername, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.ownerUsername, combo.createdAt, combo.updatedAt]
   );
   return combo;
 }
@@ -59,8 +62,8 @@ export async function updateCombo(id, data) {
     if (!row) return;
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
     db.run(
-      `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
-      [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]
+      `UPDATE combos SET name = ?, kind = ?, models = ?, ownerUsername = ?, updatedAt = ? WHERE id = ?`,
+      [merged.name, merged.kind, stringifyJson(merged.models || []), merged.ownerUsername ?? null, merged.updatedAt, id]
     );
     result = merged;
   });

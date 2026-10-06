@@ -5,6 +5,10 @@ import {
   updateProviderConnection,
   deleteProviderConnection,
 } from "@/models";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -87,6 +91,11 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
+    const existing = await getProviderConnectionById(id);
+    if (existing && caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     const body = await request.json();
     const {
       name,
@@ -104,7 +113,6 @@ export async function PUT(request, { params }) {
       dynamicBalanceEnabled,
     } = body;
 
-    const existing = await getProviderConnectionById(id);
     if (!existing) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
@@ -189,6 +197,11 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
+    const caller = await getClaims();
+    const existing = await getProviderConnectionById(id);
+    if (existing && caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const deleted = await deleteProviderConnection(id);
     if (!deleted) {

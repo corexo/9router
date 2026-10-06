@@ -124,9 +124,13 @@ export async function deleteApiKey(id) {
   return (res?.changes ?? 0) > 0;
 }
 
-export async function validateApiKey(key) {
+export async function validateApiKeyDetails(key) {
   const db = await getAdapter();
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
-  if (!row) return false;
-  return row.isActive === 1 || row.isActive === true;
+  const row = db.get(`SELECT * FROM apiKeys WHERE key = ?`, [key]);
+  if (!row || !(row.isActive === 1 || row.isActive === true)) return null;
+  return rowToKey(row);
+}
+
+export async function validateApiKey(key) {
+  return !!(await validateApiKeyDetails(key));
 }

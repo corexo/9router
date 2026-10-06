@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -53,8 +53,10 @@ export const TABLES = {
       data: "TEXT NOT NULL",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
+      ownerUsername: "TEXT",
     },
     indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_pc_owner ON providerConnections(ownerUsername)",
       "CREATE INDEX IF NOT EXISTS idx_pc_provider ON providerConnections(provider)",
       "CREATE INDEX IF NOT EXISTS idx_pc_provider_active ON providerConnections(provider, isActive)",
       "CREATE INDEX IF NOT EXISTS idx_pc_priority ON providerConnections(provider, priority)",
@@ -68,8 +70,9 @@ export const TABLES = {
       data: "TEXT NOT NULL",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
+      ownerUsername: "TEXT",
     },
-    indexes: ["CREATE INDEX IF NOT EXISTS idx_pn_type ON providerNodes(type)"],
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_pn_owner ON providerNodes(ownerUsername)", "CREATE INDEX IF NOT EXISTS idx_pn_type ON providerNodes(type)"],
   },
   proxyPools: {
     columns: {
@@ -93,6 +96,7 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      ownerUsername: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },
@@ -104,8 +108,9 @@ export const TABLES = {
       models: "TEXT NOT NULL",
       createdAt: "TEXT NOT NULL",
       updatedAt: "TEXT NOT NULL",
+      ownerUsername: "TEXT",
     },
-    indexes: ["CREATE INDEX IF NOT EXISTS idx_combo_name ON combos(name)"],
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_combo_owner ON combos(ownerUsername)", "CREATE INDEX IF NOT EXISTS idx_combo_name ON combos(name)"],
   },
   kv: {
     columns: {

@@ -182,7 +182,8 @@ async function hasValidToken(request) {
 export function isModeratorWrite(request, claims) {
   return claims?.role === "moderator" && request.method !== "GET" && request.method !== "HEAD" &&
     request.nextUrl.pathname !== "/api/auth/change-password" &&
-    request.nextUrl.pathname !== "/api/auth/logout";
+    request.nextUrl.pathname !== "/api/auth/logout" &&
+    request.nextUrl.pathname !== "/api/settings/user";
 }
 
 // Read settings directly from DB to avoid self-fetch deadlock in proxy

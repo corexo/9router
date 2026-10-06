@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName, ensureBuiltinCombos, BUILTIN_COMBOS } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 
 export const dynamic = "force-dynamic";
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -10,7 +13,8 @@ const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 export async function GET() {
   try {
     await ensureBuiltinCombos();
-    const combos = await getCombos();
+    const caller = await getClaims();
+    const combos = await getCombos(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
     return NextResponse.json({ combos });
   } catch (error) {
     console.log("Error fetching combos:", error);
@@ -22,6 +26,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
+    const caller = await getClaims();
     const { name, models, kind } = body;
 
     if (!name) {
@@ -44,7 +49,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
     }
 
-    const combo = await createCombo({ name, models: models || [], kind: kind || null });
+    const combo = await createCombo({ name, models: models || [], kind: kind || null, ownerUsername: caller?.username || null });
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {
