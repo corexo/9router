@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCockpitData } from "@/lib/usageDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 
 const VALID_PERIODS = new Set(["today", "24h", "7d", "30d", "60d"]);
 
@@ -12,7 +14,10 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
-    const data = await getCockpitData(period);
+    const cookieStore = await cookies();
+    const claims = await verifyDashboardAuthToken(cookieStore.get("auth_token")?.value);
+    const ownerUsername = claims?.role === "moderator" ? claims.username : null;
+    const data = await getCockpitData(period, ownerUsername);
     return NextResponse.json(data);
   } catch (error) {
     console.error("[API] Failed to get cockpit data:", error);
