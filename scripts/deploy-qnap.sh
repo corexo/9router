@@ -15,6 +15,7 @@ set -euo pipefail
 QNAP_HOST="qnap"
 QNAP_IP="192.168.10.40"
 CONTAINER_NAME="9router-qnap-test"
+smoke_cid=""
 HOST_PORT="9311"
 INTERNAL_PORT="20128"
 REMOTE_DATA_DIR="/share/CE_CACHEDEV1_DATA/Container/9router-test/data-home"
@@ -176,7 +177,6 @@ do_deploy() {
     if ! ss -ltn "( sport = :$candidate )" | grep -q LISTEN; then smoke_port="$candidate"; break; fi
   done
   [[ -n "$smoke_port" ]] || { log_err "No free smoke-test port"; exit 1; }
-  local smoke_cid=""
   trap 'if [[ -n "$smoke_cid" ]]; then docker rm -f "$smoke_cid" >/dev/null 2>&1 || true; fi' EXIT INT TERM
   log_info "Running local smoke test on container..."
   smoke_cid=$(docker run -d --rm -p "${smoke_port}:20128" -e NODE_ENV=production "${image_tag}")
