@@ -14,6 +14,9 @@ function rowToKey(row) {
     lastUsed: row.lastUsed || null,
     requestsToday: Number(row.requestsToday || 0),
     totalRequests: Number(row.totalRequests || 0),
+    totalPromptTokens: Number(row.totalPromptTokens || 0),
+    totalCompletionTokens: Number(row.totalCompletionTokens || 0),
+    totalCost: Number(row.totalCost || 0),
   };
 }
 
@@ -24,6 +27,9 @@ export async function getApiKeys() {
       k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
+      COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,
+      COALESCE(u.totalCompletionTokens, 0) as totalCompletionTokens,
+      COALESCE(u.totalCost, 0) as totalCost,
       u.lastUsed
     FROM apiKeys k
     LEFT JOIN (
@@ -31,7 +37,10 @@ export async function getApiKeys() {
         apiKey,
         COUNT(*) as totalRequests,
         MAX(timestamp) as lastUsed,
-        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday
+        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday,
+        SUM(COALESCE(promptTokens, 0)) as totalPromptTokens,
+        SUM(COALESCE(completionTokens, 0)) as totalCompletionTokens,
+        SUM(COALESCE(cost, 0)) as totalCost
       FROM usageHistory
       WHERE apiKey IS NOT NULL
       GROUP BY apiKey
@@ -48,6 +57,9 @@ export async function getApiKeyById(id) {
       k.id, k.key, k.name, k.machineId, k.isActive, k.createdAt,
       COALESCE(u.totalRequests, 0) as totalRequests,
       COALESCE(u.requestsToday, 0) as requestsToday,
+      COALESCE(u.totalPromptTokens, 0) as totalPromptTokens,
+      COALESCE(u.totalCompletionTokens, 0) as totalCompletionTokens,
+      COALESCE(u.totalCost, 0) as totalCost,
       u.lastUsed
     FROM apiKeys k
     LEFT JOIN (
@@ -55,7 +67,10 @@ export async function getApiKeyById(id) {
         apiKey,
         COUNT(*) as totalRequests,
         MAX(timestamp) as lastUsed,
-        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday
+        SUM(CASE WHEN date(timestamp) = date('now') THEN 1 ELSE 0 END) as requestsToday,
+        SUM(COALESCE(promptTokens, 0)) as totalPromptTokens,
+        SUM(COALESCE(completionTokens, 0)) as totalCompletionTokens,
+        SUM(COALESCE(cost, 0)) as totalCost
       FROM usageHistory
       WHERE apiKey IS NOT NULL
       GROUP BY apiKey
