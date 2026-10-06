@@ -25,7 +25,8 @@ export async function GET() {
     if (claims?.role === "moderator" && claims.username) {
       const { password, oidcClientSecret, ...safeSettings } = settings;
       const prefs = await getUserPrefs(claims.username);
-      Object.assign(safeSettings, Object.fromEntries(Object.entries(prefs).filter(([key]) => key.startsWith("jev"))));
+      for (const key of Object.keys(safeSettings)) if (key.startsWith("jev") && key !== "jevApiKey") delete safeSettings[key];
+      Object.assign(safeSettings, Object.fromEntries(Object.entries(prefs).filter(([key]) => key.startsWith("jev") && key !== "jevApiKey")));
       safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
       return NextResponse.json({ ...safeSettings, enableRequestLogs: false, enableTranslator: false, hasPassword: true }, { headers: SETTINGS_RESPONSE_HEADERS });
     }

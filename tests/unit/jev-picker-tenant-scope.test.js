@@ -13,6 +13,8 @@ describe("Jev model pool tenant scope", () => {
     expect(picker).toContain('claims?.role === "moderator" && claims.username');
     expect(picker).toContain('getUserPrefs(tenant)');
     expect(picker).toContain('ownerUsername: tenant');
+    expect(picker).toContain('basePool.filter(tenantVisible)');
+    expect(picker).toContain('tenantPoolModels.has(id)');
     expect(models).toContain('(!ownerUsername || c.ownerUsername === ownerUsername)');
     expect(models).toContain('combo.ownerUsername === ownerUsername');
   });
