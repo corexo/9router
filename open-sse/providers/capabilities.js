@@ -158,6 +158,9 @@ export const PROVIDER_CAPABILITIES = {
   // catalog/name heuristics report a much larger Qwen family window.
   "cloudflare-ai": {
     "@cf/qwen/qwen2.5-coder-32b-instruct": { tools: true, contextWindow: 32768, maxOutput: 8192 },
+    "@cf/meta/llama-3.1-70b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
+    "@cf/meta/llama-3.1-8b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
   },
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
@@ -293,11 +296,6 @@ export const PROVIDER_CAPABILITIES = {
   // Ollama Cloud is actually needed.
   "ollama": {
     "deepseek-v4.1-flash:cloud": { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000, maxOutput: 384000 },
-  },
-  "cloudflare-ai": {
-    "@cf/meta/llama-3.1-70b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
-    "@cf/meta/llama-3.1-8b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
-    "@cf/meta/llama-3.3-70b-instruct-fp8-fast": { contextWindow: 24000, maxOutput: 8192 },
   },
 };
 
