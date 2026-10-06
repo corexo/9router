@@ -15,7 +15,7 @@ export async function PUT(request, { params }) {
     if (!node) {
       return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
     }
-    if (caller?.role === "moderator" && node.ownerUsername !== caller.username) {
+    if (caller?.username && node.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -99,7 +99,7 @@ export async function DELETE(request, { params }) {
     if (!node) {
       return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
     }
-    if (caller?.role === "moderator" && node.ownerUsername !== caller.username) {
+    if (caller?.username && node.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

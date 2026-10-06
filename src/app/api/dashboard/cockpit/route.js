@@ -16,7 +16,7 @@ export async function GET(request) {
 
     const cookieStore = await cookies();
     const claims = await verifyDashboardAuthToken(cookieStore.get("auth_token")?.value);
-    const ownerUsername = claims?.role === "moderator" ? claims.username : null;
+    const ownerUsername = claims?.username || null;
     const data = await getCockpitData(period, ownerUsername);
     return NextResponse.json(data);
   } catch (error) {

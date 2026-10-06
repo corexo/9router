@@ -93,7 +93,7 @@ export async function PUT(request, { params }) {
     const { id } = await params;
     const caller = await getClaims();
     const existing = await getProviderConnectionById(id);
-    if (existing && caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+    if (existing && caller?.username && existing.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const body = await request.json();
@@ -199,7 +199,7 @@ export async function DELETE(request, { params }) {
     const { id } = await params;
     const caller = await getClaims();
     const existing = await getProviderConnectionById(id);
-    if (existing && caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+    if (existing && caller?.username && existing.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

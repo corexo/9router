@@ -52,7 +52,7 @@ export async function GET(request) {
     if (endDate) filter.endDate = endDate;
     
     const claims = await getClaims();
-    if (claims?.role === "moderator") {
+    if (claims?.username) {
       const ownConnections = await getProviderConnections({ ownerUsername: claims.username });
       filter.connectionIds = ownConnections.map((c) => c.id);
     }

@@ -17,12 +17,12 @@ async function getCallerClaims() {
   }
 }
 
-// GET /api/keys - List API keys (moderators only see their own keys)
+// GET /api/keys - List API keys (each user sees only their own keys)
 export async function GET() {
   try {
     const claims = await getCallerClaims();
     const keys = await getApiKeys();
-    const visible = claims?.role === "moderator"
+    const visible = claims?.username
       ? keys.filter((k) => k.ownerUsername === claims.username)
       : keys;
     return NextResponse.json({ keys: visible });

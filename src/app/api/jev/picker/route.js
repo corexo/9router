@@ -43,7 +43,8 @@ export async function GET(request) {
     const [globalSettings, allCombos, unavailable, health, allConnections, usage] = await Promise.all([
       getSettings(), getCombos(), getUnavailableModelIds(), getModelHealth(), getProviderConnections(), getUsageStats("24h"),
     ]);
-    const tenant = claims?.role === "moderator" && claims.username ? claims.username : null;
+    // Roles removed: every logged-in dashboard user is a tenant with own setup.
+    const tenant = claims?.username || null;
     const tenantSettings = { ...globalSettings };
     if (tenant) for (const key of Object.keys(tenantSettings)) if (key.startsWith("jev")) delete tenantSettings[key];
     const settings = tenant ? { ...tenantSettings, ...Object.fromEntries(Object.entries(await getUserPrefs(tenant)).filter(([key]) => key.startsWith("jev"))) } : globalSettings;

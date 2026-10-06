@@ -53,7 +53,7 @@ async function normalizeProxyPoolId(proxyPoolId) {
 export async function GET() {
   try {
     const caller = await getClaims();
-    const connections = await getProviderConnections(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
+    const connections = await getProviderConnections(caller?.username ? { ownerUsername: caller.username } : {});
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};

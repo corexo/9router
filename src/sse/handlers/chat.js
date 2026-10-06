@@ -635,7 +635,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
     if (apiKeyDetails?.ownerUsername) {
       const owner = await getUserByUsername(apiKeyDetails.ownerUsername);
-      if (owner?.role === "moderator") {
+      if (owner) {
         const userPrefs = await getUserPrefs(apiKeyDetails.ownerUsername);
         chatSettings = {
           ...chatSettings,

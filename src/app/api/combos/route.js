@@ -14,7 +14,7 @@ export async function GET() {
   try {
     await ensureBuiltinCombos();
     const caller = await getClaims();
-    const combos = await getCombos(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
+    const combos = await getCombos(caller?.username ? { ownerUsername: caller.username } : {});
     return NextResponse.json({ combos });
   } catch (error) {
     console.log("Error fetching combos:", error);
