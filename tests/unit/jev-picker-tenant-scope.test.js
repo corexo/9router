@@ -13,6 +13,7 @@ describe("Jev model pool tenant scope", () => {
     expect(picker).toContain('claims?.role === "moderator" && claims.username');
     expect(picker).toContain('getUserPrefs(tenant)');
     expect(picker).toContain('ownerUsername: tenant');
+    expect(picker).toContain('if (tenant) for (const key of Object.keys(tenantSettings)) if (key.startsWith("jev")) delete tenantSettings[key]');
     expect(picker).toContain('basePool.filter(tenantVisible)');
     expect(picker).toContain('tenantPoolModels.has(id)');
     expect(models).toContain('(!ownerUsername || c.ownerUsername === ownerUsername)');
@@ -20,7 +21,8 @@ describe("Jev model pool tenant scope", () => {
   });
 
   it("does not return the shared Jev API credential to moderators", () => {
-    expect(settings).toContain('key.startsWith("jev")');
-    expect(settings).toContain('key !== "jevApiKey"');
+    expect(settings).toContain('USER_SCOPED_SETTING_KEYS');
+    expect(settings).toContain('Object.fromEntries(Object.entries(prefs).filter(([key]) => USER_SCOPED_SETTING_KEYS.has(key)))');
+    expect(settings).toContain('jevApiKey');
   });
 });

@@ -17,6 +17,11 @@ const SETTINGS_RESPONSE_HEADERS = {
 
 // Secrets must never be mass-assigned from request body (CWE-915)
 const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
+const USER_SCOPED_SETTING_KEYS = new Set([
+  "jevPoolModels", "jevFreePoolModels", "jevTierPreference", "jevTierDistributionEnabled", "jevModelTiers", "jevExcludeLocalModels", "jev1mMinContext",
+  "rtkEnabled", "headroomEnabled", "headroomUrl", "headroomCompressUserMessages", "headroomTimeoutMs",
+  "cavemanEnabled", "cavemanLevel", "ponytailEnabled", "ponytailLevel", "pxpipeEnabled", "pxpipeMinChars", "pxpipeTimeoutMs",
+]);
 
 export async function GET() {
   try {
@@ -25,8 +30,8 @@ export async function GET() {
     if (claims?.role === "moderator" && claims.username) {
       const { password, oidcClientSecret, ...safeSettings } = settings;
       const prefs = await getUserPrefs(claims.username);
-      for (const key of Object.keys(safeSettings)) if (key.startsWith("jev") && key !== "jevApiKey") delete safeSettings[key];
-      Object.assign(safeSettings, Object.fromEntries(Object.entries(prefs).filter(([key]) => key.startsWith("jev") && key !== "jevApiKey")));
+      for (const key of USER_SCOPED_SETTING_KEYS) delete safeSettings[key];
+      Object.assign(safeSettings, Object.fromEntries(Object.entries(prefs).filter(([key]) => USER_SCOPED_SETTING_KEYS.has(key))));
       safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
       return NextResponse.json({ ...safeSettings, enableRequestLogs: false, enableTranslator: false, hasPassword: true }, { headers: SETTINGS_RESPONSE_HEADERS });
     }

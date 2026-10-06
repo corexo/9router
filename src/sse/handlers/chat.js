@@ -10,6 +10,7 @@ import {
 import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
 import { getClientIp } from "@/lib/auth/loginLimiter.js";
 import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo.js";
+import { getUserByUsername } from "@/lib/db/repos/usersRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -632,8 +633,26 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     let chatSettings = await getSettings();
     const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
     if (apiKeyDetails?.ownerUsername) {
-      const userPrefs = await getUserPrefs(apiKeyDetails.ownerUsername);
-      chatSettings = { ...chatSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("rtk") || key.startsWith("headroom") || key.startsWith("caveman") || key.startsWith("ponytail") || key.startsWith("pxpipe") || key.startsWith("jev"))) };
+      const owner = await getUserByUsername(apiKeyDetails.ownerUsername);
+      if (owner?.role === "moderator") {
+        const userPrefs = await getUserPrefs(apiKeyDetails.ownerUsername);
+        chatSettings = {
+          ...chatSettings,
+          rtkEnabled: true,
+          headroomEnabled: false,
+          headroomUrl: DEFAULT_HEADROOM_URL,
+          headroomCompressUserMessages: false,
+          headroomTimeoutMs: 3000,
+          cavemanEnabled: false,
+          cavemanLevel: "full",
+          ponytailEnabled: false,
+          ponytailLevel: "full",
+          pxpipeEnabled: false,
+          pxpipeMinChars: 25000,
+          pxpipeTimeoutMs: 15000,
+          ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("rtk") || key.startsWith("headroom") || key.startsWith("caveman") || key.startsWith("ponytail") || key.startsWith("pxpipe") || key.startsWith("jev"))),
+        };
+      }
     }
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const result = await handleChatCore({

@@ -44,7 +44,9 @@ export async function GET(request) {
       getSettings(), getCombos(), getUnavailableModelIds(), getModelHealth(), getProviderConnections(), getUsageStats("24h"),
     ]);
     const tenant = claims?.role === "moderator" && claims.username ? claims.username : null;
-    const settings = tenant ? { ...globalSettings, ...Object.fromEntries(Object.entries(await getUserPrefs(tenant)).filter(([key]) => key.startsWith("jev"))) } : globalSettings;
+    const tenantSettings = { ...globalSettings };
+    if (tenant) for (const key of Object.keys(tenantSettings)) if (key.startsWith("jev")) delete tenantSettings[key];
+    const settings = tenant ? { ...tenantSettings, ...Object.fromEntries(Object.entries(await getUserPrefs(tenant)).filter(([key]) => key.startsWith("jev"))) } : globalSettings;
     const allModels = await buildModelsList(["llm"], { skipDynamicFetch: true, ownerUsername: tenant });
     const connections = tenant ? allConnections.filter((connection) => connection.ownerUsername === tenant) : allConnections;
     const combos = tenant ? allCombos.filter((combo) => combo.ownerUsername === tenant) : allCombos;
