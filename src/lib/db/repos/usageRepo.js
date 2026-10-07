@@ -1380,9 +1380,9 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
     const { getProviderConnections } = await import("./connectionsRepo.js");
     const allConnections = await getProviderConnections();
     const connections = ownerUsername
-      ? allConnections.filter((connection) => connection.ownerUsername === ownerUsername)
+      ? await getProviderConnections({ ownerUsername })
       : allConnections;
-    const ownConnectionIds = new Set(connections.map((connection) => connection.id));
+    const ownConnectionIds = new Set((ownerUsername ? connections.filter((connection) => connection.ownerUsername === ownerUsername) : connections).map((connection) => connection.id));
 
     const db = await getAdapter();
     const accountUsage = {};
@@ -1391,7 +1391,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const bucketMs = period === "today" ? (Date.now() - new Date().setHours(0, 0, 0, 0)) : (24 * 3600000);
       const since = new Date(Date.now() - bucketMs).toISOString();
       const rows = db.all(
-        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)" : ""}`,
+        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)" : ""}`,
         ownerUsername ? [since, ownerUsername] : [since]
       );
       for (const r of rows) {
@@ -1413,7 +1413,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const days = period === "30d" ? 30 : period === "60d" ? 60 : 7;
       const since = new Date(Date.now() - days * 86400000).toISOString();
       const rows = db.all(
-        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)`,
+        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)`,
         [since, ownerUsername]
       );
       for (const r of rows) {
@@ -1485,7 +1485,8 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const { getSessionCacheSnapshot, hydrateSessionCacheFromDb } = await import("@/lib/jev/sessionCache.js");
       await hydrateSessionCacheFromDb().catch(() => {});
       const list = getSessionCacheSnapshot({ includeTurns: true })
-        .map(({ cacheId, state, models, providers, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+        .map(({ cacheId, state, models, providers, connectionId, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+          connectionId,
           cacheId,
           state,
           models,
