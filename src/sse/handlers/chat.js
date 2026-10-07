@@ -12,7 +12,7 @@ import { getClientIp } from "@/lib/auth/loginLimiter.js";
 import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo.js";
 import { getUserByUsername } from "@/lib/db/repos/usersRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, hasUsers } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -121,6 +121,7 @@ export async function handleChat(request, clientRawRequest = null) {
   const apiKey = extractApiKey(request);
   const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey, getClientIp(request)) : null;
   const ownerUsername = apiKeyDetails?.ownerUsername || null;
+  const tenantScoped = await hasUsers();
   if (authHeader && apiKey) {
     const masked = log.maskKey(apiKey);
     log.debug("AUTH", `API Key: ${masked}`);
@@ -129,7 +130,16 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   // Enforce API key if enabled in settings
-  const settings = await getSettings();
+  let settings = await getSettings();
+  if (ownerUsername) {
+    const owner = await getUserByUsername(ownerUsername);
+    if (owner?.role === "moderator") {
+      const userPrefs = await getUserPrefs(ownerUsername);
+      const scopedSettings = { ...settings };
+      for (const key of Object.keys(scopedSettings)) if (key.startsWith("jev") && key !== "jevApiKey") delete scopedSettings[key];
+      settings = { ...scopedSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("jev"))) };
+    }
+  }
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
@@ -141,6 +151,8 @@ export async function handleChat(request, clientRawRequest = null) {
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
   }
+
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
@@ -166,7 +178,7 @@ export async function handleChat(request, clientRawRequest = null) {
       // The pool is deliberately NOT peak-hour filtered.
       // skipDynamicFetch: no slow upstream /models discovery per request
       const configuredPool = Array.isArray(settings.jevPoolModels) ? settings.jevPoolModels : [];
-      const allActiveModels = await buildModelsList(["llm"], { skipDynamicFetch: true });
+      const allActiveModels = await buildModelsList(["llm"], { skipDynamicFetch: true, ownerUsername });
       // Exclude combos from active models — Jev must only route to concrete provider models (with slash)
       const activeConcreteModels = allActiveModels.filter(
         (m) => m.owned_by !== "combo" && m.owned_by !== "9router" && typeof m.id === "string" && m.id.includes("/")
@@ -236,7 +248,7 @@ export async function handleChat(request, clientRawRequest = null) {
         // Local-first exclusion applies only to the unconfigured default pool;
         // an explicit checkbox selection always wins.
         if (!Array.isArray(settings.jevPoolModels) && settings.jevExcludeLocalModels !== false) {
-          const localComboModels = await getComboModels("local-first");
+          const localComboModels = await getComboModels("local-first", ownerUsername);
           if (Array.isArray(localComboModels) && localComboModels.length > 0) {
             const localSet = new Set(localComboModels.map((m) => m.toLowerCase()));
             const beforeCount = availableModels.length;
@@ -356,8 +368,8 @@ export async function handleChat(request, clientRawRequest = null) {
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
     const cleanRouted = routedModel ? stripThinkingSuffix(routedModel) : null;
-    const routedInfo = cleanRouted ? await getModelInfo(cleanRouted) : { provider: null };
-    if ((!routedInfo.provider && !(await getComboModels(cleanRouted))) && availableModels.length > 0) {
+    const routedInfo = cleanRouted ? await getModelInfo(cleanRouted, { ownerUsername }) : { provider: null };
+    if ((!routedInfo.provider && !(await getComboModels(cleanRouted, ownerUsername))) && availableModels.length > 0) {
       log.warn("JEV", `[9Router-Jev] [WARN] Fallback '${routedModel}' nicht auflösbar -> Fallback: ${availableModels[0]}`);
       routedModel = availableModels[0];
     }
@@ -416,7 +428,7 @@ export async function handleChat(request, clientRawRequest = null) {
   const requiredCapabilities = detectRequiredCapabilities(body);
 
   // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(routedModel);
+  const comboModels = await getComboModels(routedModel, ownerUsername);
   if (comboModels) {
     // A combo can outlive a retired upstream model. Health locks are authoritative
     // for every router path, not only Jev, so a 410 is never retried by compaction.
@@ -444,7 +456,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, ownerUsername);
         },
         log,
         comboName: routedModel,
@@ -459,7 +471,7 @@ export async function handleChat(request, clientRawRequest = null) {
       body,
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, ownerUsername),
         adapterAdded
       ),
       log,
@@ -480,7 +492,7 @@ export async function handleChat(request, clientRawRequest = null) {
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, ownerUsername),
         adapterAdded
       ),
       log,
@@ -497,18 +509,18 @@ export async function handleChat(request, clientRawRequest = null) {
     body.thinking_level = thinkingSuffix;
   }
 
-  return tap(handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey));
+  return tap(handleSingleModelChat(body, routedModel, clientRawRequest, request, apiKey, ownerUsername));
 }
 
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
-  const modelInfo = await getModelInfo(modelStr);
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, ownerUsername = null) {
+  const modelInfo = await getModelInfo(modelStr, { ownerUsername });
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
-    const comboModels = await getComboModels(modelStr);
+    const comboModels = await getComboModels(modelStr, ownerUsername);
     if (comboModels) {
       const unavailableModels = await getUnavailableModelIds();
       const healthyComboModels = comboModels.filter((id) => !unavailableModels.has(id));
@@ -543,7 +555,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, ownerUsername);
           },
           log,
           comboName: modelStr,
@@ -558,7 +570,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, ownerUsername),
           adapterAdded
         ),
         log,
@@ -589,6 +601,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   while (true) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId: excludeConnectionIds.size === 0 ? preferredConnectionId : null,
+      ...(ownerUsername ? { ownerUsername, tenantScoped: true } : {}),
 
     });
 

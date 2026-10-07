@@ -261,6 +261,8 @@ Multi-user password rotation is tracked per user (`users.mustChangePassword`); u
 
 Jev usage records store prompt/input and completion/output token counts. Direct SystemOne calls use provider-reported usage when available; Jev currently omits usage, so those calls use a documented character-count estimate (ceil(text length / 4)). Usage is grouped by downstream API-key owner for per-user dashboards.
 
+For multi-tenant `/v1` traffic, the API-key owner scopes provider credentials, model catalogs, custom provider nodes, and combo lookup at the routing edge. Keys without a known owner are rejected once multi-user accounts exist. The shared Jev upstream credential remains global; each user's model pool and Jev usage are owner-scoped.
+
 Cache Keep-Alive probes preserve the session's provider/account and prompt prefix, but choose the smallest advertised model from that provider whose context window fits the estimated prefix plus a 1k-token safety margin. Review variants lose ties to standard variants. The static `CACHE_KEEPALIVE_MODEL_BLACKLIST` excludes models known to reject probes for this purpose; a blacklisted original is never used as fallback. Gemini CLI `429 RESOURCE_EXHAUSTED` responses carrying the FreeTier input-token quota metric use the provider retry delay (currently 10 seconds), then move to the next eligible account/model instead of retrying the exhausted account. Ambiguous errors may receive one bounded Jev adjudication per request; only compact provider/model/status/trimmed-error metadata and eligible candidates are sent, never prompts or credentials. Invalid actions, timeout, or transport failure fall back to deterministic handling.
 
 ## OAuth Onboarding and Token Refresh Lifecycle

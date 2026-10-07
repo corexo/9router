@@ -18,11 +18,13 @@ vi.mock("@/sse/services/auth.js", () => ({
   clearAccountError: mocks.clearAccountError,
   extractApiKey: mocks.extractApiKey,
   isValidApiKey: mocks.isValidApiKey,
+  getApiKeyDetailsForRequest: vi.fn(async () => null),
 }));
 
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
   getCombos: mocks.getCombos,
+  hasUsers: vi.fn(async () => false),
 }));
 
 vi.mock("open-sse/handlers/fetch/index.js", () => ({

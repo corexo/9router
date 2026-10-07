@@ -41,6 +41,12 @@ beforeEach(() => {
 });
 
 describe("Antigravity quota-aware routing", () => {
+  it("restricts account selection to the API-key owner in tenant mode", async () => {
+    mocks.getProviderConnections.mockResolvedValue([{ id: "u-conn", provider: "antigravity", isActive: true, accessToken: "test" }]);
+    await getProviderCredentials("antigravity", null, MODEL, { tenantScoped: true, ownerUsername: "Ugur" });
+    expect(mocks.getProviderConnections).toHaveBeenCalledWith({ provider: "antigravity", isActive: true, ownerUsername: "Ugur" });
+  });
+
   it("records exhausted upstream quota after 429 and returns its exact reset time", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));

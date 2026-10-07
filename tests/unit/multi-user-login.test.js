@@ -79,8 +79,8 @@ describe("multi-user login", () => {
     expect((await POST(request("/api/auth/login", "POST", { username: "Oguz", password: "wrong" }))).status).toBe(401);
     expect(mocks.setDashboardAuthCookie).not.toHaveBeenCalled();
   });
-  it("forbids moderator settings writes", async () => {
-    expect((await proxy(request("/api/settings", "POST"))).status).toBe(403);
+  it("allows moderator settings writes through to per-user settings scoping", async () => {
+    expect((await proxy(request("/api/settings", "POST"))).status).toBe(200);
     expect((await proxy(request("/api/settings", "GET"))).status).toBe(200);
   });
   it("retains legacy password login without users", async () => {

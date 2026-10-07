@@ -4,8 +4,9 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
+  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, hasUsers } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -36,18 +37,22 @@ export async function handleImageGeneration(request) {
   const modelStr = body.model;
 
   const apiKey = extractApiKey(request);
+  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
+  const ownerUsername = apiKeyDetails?.ownerUsername || null;
+  const tenantScoped = await hasUsers();
   const settings = await getSettings();
   if (settings.requireApiKey) {
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
   }
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!body.prompt) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
 
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
-  const comboModels = await getComboModels(modelStr);
+  const comboModels = await getComboModels(modelStr, ownerUsername);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -56,7 +61,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId }),
+      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, ownerUsername, tenantScoped }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -64,11 +69,11 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, ownerUsername, tenantScoped });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId } = {}) {
-  const modelInfo = await getModelInfo(modelStr);
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, ownerUsername, tenantScoped } = {}) {
+  const modelInfo = await getModelInfo(modelStr, { ownerUsername });
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
   const { provider, model } = modelInfo;
@@ -91,7 +96,9 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
+    const credentials = tenantScoped
+      ? await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId, ownerUsername, tenantScoped: true })
+      : await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

@@ -1,4 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
+import { getClientIp } from "@/lib/auth/loginLimiter.js";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -10,6 +12,11 @@ import { getPricingForModel as getPricingForModelSync } from "open-sse/providers
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
+
+export async function getApiKeyDetailsForRequest(request) {
+  const key = extractApiKey(request);
+  return key ? validateApiKeyDetails(key, getClientIp(request)) : null;
+}
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
@@ -72,7 +79,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    const connections = await getProviderConnections({
+      provider: providerId,
+      isActive: true,
+      ...(options.tenantScoped ? { ownerUsername: options.ownerUsername || "__unowned__" } : {}),
+    });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {

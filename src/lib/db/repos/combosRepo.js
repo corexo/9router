@@ -28,10 +28,12 @@ export async function getComboById(id) {
   return rowToCombo(row);
 }
 
-export async function getComboByName(name) {
+export async function getComboByName(name, ownerUsername = null) {
   if (!name) return null;
   const db = await getAdapter();
-  const row = db.get(`SELECT * FROM combos WHERE LOWER(name) = LOWER(?)`, [name]);
+  const row = ownerUsername
+    ? db.get(`SELECT * FROM combos WHERE LOWER(name) = LOWER(?) AND ownerUsername = ?`, [name, ownerUsername])
+    : db.get(`SELECT * FROM combos WHERE LOWER(name) = LOWER(?)`, [name]);
   return rowToCombo(row);
 }
 
