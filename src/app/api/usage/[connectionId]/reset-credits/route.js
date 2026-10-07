@@ -2,6 +2,8 @@
 import "open-sse/index.js";
 
 import { getProviderConnectionById } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import {
   consumeCodexRateLimitResetCredit,
   getCodexRateLimitResetCredits,
@@ -27,9 +29,13 @@ function isAuthExpiredError(error) {
 
 const SUPPORTED_RESET_PROVIDERS = ["codex", "claude", "glm", "glm-cn"];
 
-async function getConnectionAndProxy(connectionId) {
+async function getConnectionAndProxy(connectionId, request) {
   const connection = await getProviderConnectionById(connectionId);
   if (!connection) {
+    return { response: Response.json({ error: "Connection not found" }, { status: 404 }) };
+  }
+  const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+  if (claims?.username && connection.ownerUsername !== claims.username) {
     return { response: Response.json({ error: "Connection not found" }, { status: 404 }) };
   }
 
@@ -65,11 +71,11 @@ async function refreshOAuthConnection(connection, proxyOptions) {
   }
 }
 
-export async function GET(_request, { params }) {
+export async function GET(request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
-    const resolved = await getConnectionAndProxy(connectionId);
+    const resolved = await getConnectionAndProxy(connectionId, request);
     if (resolved.response) return resolved.response;
     ({ connection } = resolved);
     const { isOAuth, proxyOptions } = resolved;
@@ -108,11 +114,11 @@ export async function GET(_request, { params }) {
   }
 }
 
-export async function POST(_request, { params }) {
+export async function POST(request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
-    const resolved = await getConnectionAndProxy(connectionId);
+    const resolved = await getConnectionAndProxy(connectionId, request);
     if (resolved.response) return resolved.response;
     ({ connection } = resolved);
     const { isOAuth, proxyOptions } = resolved;
