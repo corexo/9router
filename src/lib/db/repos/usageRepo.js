@@ -1085,7 +1085,15 @@ export async function getCacheStats(period = "7d", ownerUsername = null) {
         entry.requests += 1;
         byProviderMap.set(provider, entry);
       }
-      const byProvider = [...byProviderMap.values()].map((entry) => ({ ...entry, hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0 }));
+      const providerNames = {
+        claude: "Claude (Anthropic)", glm: "Z.ai (GLM)", codex: "ChatGPT (OpenAI Codex)", gemini: "Google Gemini",
+        opencode: "OpenCode", ollama: "Ollama", "cloudflare-ai": "Cloudflare AI", github: "GitHub Models", nvidia: "NVIDIA NIM", jev: "Jev API",
+      };
+      const byProvider = [...byProviderMap.values()].map((entry) => ({
+        ...entry,
+        name: providerNames[entry.provider] || entry.provider,
+        hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0,
+      }));
       return {
         period,
         summary: { totalPromptTokens, totalCachedTokens, totalCompletionTokens, overallHitRate: totalPromptTokens ? Number(((totalCachedTokens / totalPromptTokens) * 100).toFixed(1)) : 0, totalRequests: rows.length, cachedRequests: rows.filter((row) => { const t = parseJson(row.tokens, {}) || {}; return Number(t.cached_tokens || t.cache_read_input_tokens || 0) > 0; }).length, estimatedSavingsUsd: Number(((totalCachedTokens / 1000000) * 2.7).toFixed(2)) },

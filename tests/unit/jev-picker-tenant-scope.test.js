@@ -10,12 +10,12 @@ const settings = readFileSync(resolve(root, "src/app/api/settings/route.js"), "u
 
 describe("Jev model pool tenant scope", () => {
   it("resolves moderator preferences and scopes available models to their connections", () => {
-    expect(picker).toContain('claims?.role === "moderator" && claims.username');
+    expect(picker).toContain('claims?.username || null');
     expect(picker).toContain('getUserPrefs(tenant)');
     expect(picker).toContain('ownerUsername: tenant');
     expect(picker).toContain('if (tenant) for (const key of Object.keys(tenantSettings)) if (key.startsWith("jev")) delete tenantSettings[key]');
-    expect(picker).toContain('basePool.filter(tenantVisible)');
-    expect(picker).toContain('tenantPoolModels.has(id)');
+    expect(picker).toContain('configuredPool.filter((id) => activeIds.has(id))');
+    expect(picker).toContain('buildModelsList(["llm"], { skipDynamicFetch: true, ownerUsername: tenant })');
     expect(models).toContain('(!ownerUsername || c.ownerUsername === ownerUsername)');
     expect(models).toContain('combo.ownerUsername === ownerUsername');
   });
