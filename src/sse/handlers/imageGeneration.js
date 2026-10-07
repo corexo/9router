@@ -2,11 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
-  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings, hasUsers } from "@/lib/localDb";
+import { getSettings } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -36,10 +35,7 @@ export async function handleImageGeneration(request) {
   const binaryOutput = url.searchParams.get("response_format") === "binary";
   const modelStr = body.model;
 
-  const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
-  const ownerUsername = apiKeyDetails?.ownerUsername || null;
-  const tenantScoped = await hasUsers();
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   const settings = await getSettings();
   if (settings.requireApiKey) {
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");

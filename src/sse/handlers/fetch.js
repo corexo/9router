@@ -2,11 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
-  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings, getCombos, hasUsers } from "@/lib/localDb";
+import { getSettings, getCombos } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleFetchCore } from "open-sse/handlers/fetch/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -41,10 +40,7 @@ export async function handleFetch(request) {
   log.request("POST", `${reqUrl.pathname} | ${providerInput}`);
 
   // Log API key (masked)
-  const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
-  const ownerUsername = apiKeyDetails?.ownerUsername || null;
-  const tenantScoped = await hasUsers();
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {

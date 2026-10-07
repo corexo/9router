@@ -2,11 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
-  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings, hasUsers } from "@/lib/localDb";
+import { getSettings } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getModelInfo } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -45,10 +44,7 @@ export async function handleEmbeddings(request) {
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
   // Log API key (masked)
-  const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
-  const ownerUsername = apiKeyDetails?.ownerUsername || null;
-  const tenantScoped = await hasUsers();
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {

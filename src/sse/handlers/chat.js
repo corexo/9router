@@ -7,12 +7,11 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
-import { getClientIp } from "@/lib/auth/loginLimiter.js";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getUserPrefs } from "@/lib/db/repos/userPrefsRepo.js";
 import { getUserByUsername } from "@/lib/db/repos/usersRepo.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
-import { getSettings, hasUsers } from "@/lib/localDb";
+import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -119,9 +118,7 @@ export async function handleChat(request, clientRawRequest = null) {
   // Log API key (masked)
   const authHeader = request.headers.get("Authorization");
   const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey, getClientIp(request)) : null;
-  const ownerUsername = apiKeyDetails?.ownerUsername || null;
-  const tenantScoped = await hasUsers();
+  const { apiKeyDetails, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (authHeader && apiKey) {
     const masked = log.maskKey(apiKey);
     log.debug("AUTH", `API Key: ${masked}`);
@@ -529,7 +526,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
       let chatSettings = await getSettings();
       if (apiKey) {
-        const keyDetails = await validateApiKeyDetails(apiKey);
+        const keyDetails = (await getTenantRequestContext(request)).apiKeyDetails;
         if (keyDetails?.ownerUsername) {
           const userPrefs = await getUserPrefs(keyDetails.ownerUsername);
           chatSettings = { ...chatSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("jev"))) };
@@ -645,7 +642,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Use shared chatCore
     let chatSettings = await getSettings();
-    const apiKeyDetails = apiKey ? await validateApiKeyDetails(apiKey) : null;
+    const apiKeyDetails = apiKey ? (await getTenantRequestContext(request)).apiKeyDetails : null;
     if (apiKeyDetails?.ownerUsername) {
       const owner = await getUserByUsername(apiKeyDetails.ownerUsername);
       if (owner) {

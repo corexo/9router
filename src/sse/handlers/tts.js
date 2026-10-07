@@ -1,8 +1,9 @@
 import {
-  extractApiKey, isValidApiKey, getApiKeyDetailsForRequest,
+  isValidApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
-import { getSettings, hasUsers } from "@/lib/localDb";
+import { getSettings } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleTtsCore } from "open-sse/handlers/ttsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -34,10 +35,7 @@ export async function handleTts(request) {
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
   const settings = await getSettings();
-  const apiKey = extractApiKey(request);
-  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
-  const ownerUsername = apiKeyDetails?.ownerUsername || null;
-  const tenantScoped = await hasUsers();
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (settings.requireApiKey) {
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     const valid = !!apiKeyDetails || await isValidApiKey(apiKey);

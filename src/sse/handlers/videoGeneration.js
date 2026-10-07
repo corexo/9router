@@ -2,11 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
-  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings, getProviderConnectionById, hasUsers } from "@/lib/localDb";
+import { getSettings, getProviderConnectionById } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getModelInfo } from "../services/model.js";
 import { handleVideoProxyCore, getVideoConfig, sanitizeSecrets } from "open-sse/handlers/videoCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -44,9 +43,7 @@ const CREATE_ROTATION_STATUSES = new Set([
 ]);
 
 async function requireValidApiKey(request) {
-  const apiKey = extractApiKey(request);
-  const details = apiKey ? await getApiKeyDetailsForRequest(request) : null;
-  const tenantScoped = await hasUsers();
+  const { apiKey, apiKeyDetails: details, tenantScoped } = await getTenantRequestContext(request);
   const settings = await getSettings();
   if (settings.requireApiKey) {
     if (!apiKey) return { error: errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key") };
