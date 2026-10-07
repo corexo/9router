@@ -60,7 +60,9 @@ export async function handleStt(request) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { ownerUsername, tenantScoped: Boolean(tenantScoped) });
+    const credentials = tenantScoped
+  ? await getProviderCredentials(provider, excludeConnectionIds, model, { ownerUsername, tenantScoped: true })
+  : await getProviderCredentials(provider, excludeConnectionIds, model);
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
