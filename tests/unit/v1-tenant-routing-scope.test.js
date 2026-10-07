@@ -20,7 +20,7 @@ describe("/v1 tenant routing boundary", () => {
 
   it("applies tenant scope to each API-key routed provider handler", () => {
     for (const handler of requestHandlers) {
-      expect(handler.includes("getApiKeyDetailsForRequest(request)") || handler.includes("validateApiKeyDetails(apiKey")).toBe(true);
+      expect(handler).toContain("getTenantRequestContext(request)");
       expect(handler).toContain("tenantScoped");
     }
   });
