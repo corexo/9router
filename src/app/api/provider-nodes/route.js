@@ -24,7 +24,7 @@ const CUSTOM_EMBEDDING_DEFAULTS = {
 export async function GET() {
   try {
     const caller = await getClaims();
-    const nodes = await getProviderNodes(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
+    const nodes = await getProviderNodes(caller?.username ? { ownerUsername: caller.username } : {});
     return NextResponse.json({ nodes });
   } catch (error) {
     console.log("Error fetching provider nodes:", error);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 
 const GITLAB_DEFAULT_BASE = "https://gitlab.com";
 
@@ -36,7 +36,7 @@ export async function POST(request) {
     const user = await userRes.json();
     const email = user.email || user.public_email || "";
 
-    await createProviderConnection({
+    await createOwnedProviderConnection({
       provider: "gitlab",
       authType: "oauth",
       accessToken: token.trim(),

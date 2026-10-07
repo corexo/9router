@@ -2,10 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleSearchCore } from "open-sse/handlers/search/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -37,7 +37,7 @@ export async function handleSearch(request) {
   log.request("POST", `${url.pathname} | ${providerInput}`);
 
   // Log API key (masked)
-  const apiKey = extractApiKey(request);
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {
@@ -51,12 +51,14 @@ export async function handleSearch(request) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
   }
+
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!providerInput || typeof providerInput !== "string") {
     log.warn("SEARCH", "Missing provider/model");
@@ -69,7 +71,7 @@ export async function handleSearch(request) {
   }
 
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
-  const combos = await getCombos();
+  const combos = await getCombos(ownerUsername ? { ownerUsername } : {});
   const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
@@ -79,7 +81,7 @@ export async function handleSearch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings, ownerUsername),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -87,10 +89,10 @@ export async function handleSearch(request) {
     });
   }
 
-  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings);
+  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings, ownerUsername);
 }
 
-async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, ownerUsername = null) {
   const query = body.query;
   const providerId = resolveProviderId(providerInput);
   const resolvedProvider = AI_PROVIDERS[providerId];
@@ -164,12 +166,16 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
     // Provider that actually owns the connection in use — differs from
     // providerId once we fall back, and error locks must be attributed to it.
     let credentialProviderId = providerId;
-    let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey);
+    let credentials = ownerUsername
+      ? await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey, { ownerUsername, tenantScoped: true })
+      : await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey);
 
     // Fall back to the related chat provider's credentials when this search
     // provider has none of its own (one key, chat + search).
     if (!credentials && fallbackProviderId) {
-      credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey);
+      credentials = ownerUsername
+        ? await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey, { ownerUsername, tenantScoped: true })
+        : await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey);
       if (credentials) {
         credentialProviderId = fallbackProviderId;
         log.info("AUTH", `\x1b[32m${providerId} reusing ${fallbackProviderId} credentials\x1b[0m`);

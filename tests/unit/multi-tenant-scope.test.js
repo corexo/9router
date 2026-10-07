@@ -92,10 +92,10 @@ describe("multi-tenant scoping at the dashboard API edge", () => {
     expect(returned.some((c) => c.ownerUsername === "Oguz")).toBe(false);
   });
 
-  it("admin sees all connections (no filter)", async () => {
+  it("admin sees only the admin's own/private tenant connections", async () => {
     setClaims({ sub: "id-1", username: "Oguz", role: "admin" });
     await GETConnections();
-    expect(mocks.getProviderConnections).toHaveBeenCalledWith({});
+    expect(mocks.getProviderConnections).toHaveBeenCalledWith({ ownerUsername: "Oguz" });
   });
 
   it("anonymous caller gets all (legacy single-user compat)", async () => {
@@ -110,13 +110,13 @@ describe("multi-tenant scoping at the dashboard API edge", () => {
     expect(mocks.createProviderConnection).toHaveBeenCalledWith(expect.objectContaining({ ownerUsername: "alice" }));
   });
 
-  it("nodes list scoped for moderator, full for admin", async () => {
+  it("nodes list scoped to the current tenant for both users", async () => {
     setClaims({ sub: "id-2", username: "alice", role: "moderator" });
     await GETNodes();
     expect(mocks.getProviderNodes).toHaveBeenCalledWith({ ownerUsername: "alice" });
     setClaims({ sub: "id-1", username: "Oguz", role: "admin" });
     await GETNodes();
-    expect(mocks.getProviderNodes).toHaveBeenCalledWith({});
+    expect(mocks.getProviderNodes).toHaveBeenCalledWith({ ownerUsername: "Oguz" });
   });
 
   it("combos list scoped for moderator", async () => {

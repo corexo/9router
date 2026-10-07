@@ -2,10 +2,10 @@ import {
   getProviderCredentials,
   markAccountUnavailable,
   clearAccountError,
-  extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleFetchCore } from "open-sse/handlers/fetch/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -40,7 +40,7 @@ export async function handleFetch(request) {
   log.request("POST", `${reqUrl.pathname} | ${providerInput}`);
 
   // Log API key (masked)
-  const apiKey = extractApiKey(request);
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {
@@ -54,12 +54,14 @@ export async function handleFetch(request) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
   }
+
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!providerInput || typeof providerInput !== "string") {
     log.warn("FETCH", "Missing provider/model");
@@ -89,7 +91,7 @@ export async function handleFetch(request) {
   }
 
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
-  const combos = await getCombos();
+  const combos = await getCombos(ownerUsername ? { ownerUsername } : {});
   const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
@@ -100,7 +102,7 @@ export async function handleFetch(request) {
     return handleComboChat({
       body,
       models: peakModels,
-      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings, ownerUsername),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -108,10 +110,10 @@ export async function handleFetch(request) {
     });
   }
 
-  return handleSingleProviderFetch(body, providerInput, request, apiKey, settings);
+  return handleSingleProviderFetch(body, providerInput, request, apiKey, settings, ownerUsername);
 }
 
-async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings, ownerUsername = null) {
   const targetUrl = body.url;
   const format = body.format;
   const maxCharacters = body.max_characters;
@@ -166,7 +168,9 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   const fetchLockKey = `webfetch:${providerId}`;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey);
+    const credentials = ownerUsername
+      ? await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey, { ownerUsername, tenantScoped: true })
+      : await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey);
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

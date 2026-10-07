@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
 
 /**
@@ -103,7 +103,7 @@ export async function POST(request) {
       if (item.isActive === undefined) item.isActive = true;
       if (!item.lastRefreshAt) item.lastRefreshAt = new Date().toISOString();
 
-      const created = await createProviderConnection({
+      const created = await createOwnedProviderConnection({
         provider: "codex",
         authType: "oauth",
         ...item,

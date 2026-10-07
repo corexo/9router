@@ -1,4 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { validateApiKeyDetails } from "@/lib/db/repos/apiKeysRepo.js";
+import { getClientIp } from "@/lib/auth/loginLimiter.js";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -10,6 +12,11 @@ import { getPricingForModel as getPricingForModelSync } from "open-sse/providers
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
+
+export async function getApiKeyDetailsForRequest(request) {
+  const key = extractApiKey(request);
+  return key ? validateApiKeyDetails(key, getClientIp(request)) : null;
+}
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
@@ -48,11 +55,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const settings = await getSettings();
-      const override = (settings.providerStrategies || {})[providerId] || {};
+      const override = options.tenantScoped ? {} : ((settings.providerStrategies || {})[providerId] || {});
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
       if (strategy !== "none") {
-        const allPools = await getProxyPools({ isActive: true });
+        const allPools = await getProxyPools({ isActive: true, ...(options.tenantScoped ? { ownerUsername: options.ownerUsername } : {}) });
         const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
@@ -72,7 +79,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    const connections = await getProviderConnections({
+      provider: providerId,
+      isActive: true,
+      ...(options.tenantScoped ? { ownerUsername: options.ownerUsername || "__unowned__" } : {}),
+    });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -243,11 +254,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (current && current.lastUsedAt && currentCount < stickyLimit) {
         // Stay with current account
         connection = current;
-        // Update lastUsedAt and increment count (await to ensure persistence)
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        });
+        // Shared consumers may route through the account but must not mutate its owner-only rotation state.
+        if (!(options.tenantScoped && connection.ownerUsername !== options.ownerUsername)) {
+          await updateProviderConnection(connection.id, {
+            lastUsedAt: new Date().toISOString(),
+            consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
+          });
+        }
       } else {
         // Pick the least recently used (excluding current if possible)
         const sortedByOldest = [...availableConnections].sort((a, b) => {
@@ -259,11 +272,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
         connection = sortedByOldest[0];
 
-        // Update lastUsedAt and reset count to 1 (await to ensure persistence)
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: 1
-        });
+        // Shared consumers may route through the account but must not mutate its owner-only rotation state.
+        if (!(options.tenantScoped && connection.ownerUsername !== options.ownerUsername)) {
+          await updateProviderConnection(connection.id, {
+            lastUsedAt: new Date().toISOString(),
+            consecutiveUseCount: 1
+          });
+        }
       }
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)
@@ -294,6 +309,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      isSharedAccount: Boolean(options.tenantScoped && connection.ownerUsername !== options.ownerUsername),
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getProviderConnectionById } from "@/models";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getProviderConnectionById, getProviderConnectionForUser } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
@@ -492,10 +494,21 @@ const PROVIDER_MODELS_CONFIG = {
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
-    const connection = await getProviderConnectionById(id);
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const connection = claims?.username
+      ? await getProviderConnectionForUser(id, claims.username)
+      : await getProviderConnectionById(id);
 
     if (!connection) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+    }
+    if (claims?.username && connection.ownerUsername !== claims.username) {
+      const configured = connection.providerSpecificData?.enabledModels;
+      const catalog = getModelsByProviderId(connection.provider) || [];
+      const models = (Array.isArray(configured) && configured.length ? configured : catalog.map((item) => item.id))
+        .filter((model) => typeof model === "string" && model)
+        .map((model) => ({ id: model, name: model }));
+      return NextResponse.json({ provider: connection.provider, connectionId: connection.id, models, sharedReadOnly: true });
     }
 
     if (isOpenAICompatibleProvider(connection.provider)) {

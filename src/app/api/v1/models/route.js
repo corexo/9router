@@ -5,7 +5,8 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, hasUsers } from "@/lib/localDb";
+import { getApiKeyDetailsForRequest } from "@/sse/services/auth.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -395,8 +396,9 @@ export async function buildModelsList(kindFilter, options = {}) {
       // Config-driven live catalog override (e.g. Kiro returns dynamic
       // -thinking/-agentic variants per account). On failure, fall back to
       // whatever rawModelIds already holds.
+      const canPersistConnection = !ownerUsername || conn.ownerUsername === ownerUsername;
       const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-      if (liveResolver && !hasExplicitEnabledModels) {
+      if (liveResolver && !hasExplicitEnabledModels && canPersistConnection) {
         try {
           const live = await liveResolver(conn);
           if (live?.models?.length) {
@@ -529,6 +531,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         providerId === "codex"
         && !hasExplicitEnabledModels
         && (options.includeDiscovered || []).includes("codex")
+        && canPersistConnection
       ) {
         try {
           const live = await resolveCodexLiveModels(
@@ -641,6 +644,12 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
+    const apiKeyDetails = await getApiKeyDetailsForRequest(request);
+    const tenantScoped = await hasUsers();
+    if (tenantScoped && !apiKeyDetails?.ownerUsername) {
+      return Response.json({ error: { message: "API key must be assigned to a user", type: "authentication_error" } }, { status: 401 });
+    }
+    const ownerUsername = apiKeyDetails?.ownerUsername || null;
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
     const rawIncludeDiscovered = request?.url ? new URL(request.url).searchParams.get("includeDiscovered") : null;
@@ -648,7 +657,7 @@ export async function GET(request) {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, includeDiscovered });
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, includeDiscovered, ownerUsername });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

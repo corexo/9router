@@ -14,7 +14,7 @@ export async function GET(request, { params }) {
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    if (caller?.role === "moderator" && key.ownerUsername !== caller.username) {
+    if (caller?.username && key.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     return NextResponse.json({ key });
@@ -36,7 +36,7 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
     const caller = await getClaims();
-    if (caller?.role === "moderator" && existing.ownerUsername !== caller.username) {
+    if (caller?.username && existing.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -58,7 +58,7 @@ export async function DELETE(request, { params }) {
     const { id } = await params;
     const caller = await getClaims();
     const existing = await getApiKeyById(id);
-    if (caller?.role === "moderator" && existing?.ownerUsername !== caller.username) {
+    if (caller?.username && existing?.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

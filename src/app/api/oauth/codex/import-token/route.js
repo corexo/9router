@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
 
 /**
@@ -68,7 +68,7 @@ export async function POST(request) {
     const connectionName = name || email || "ChatGPT Access Token";
 
     // Save to database as access_token authType (no refresh token)
-    const connection = await createProviderConnection({
+    const connection = await createOwnedProviderConnection({
       provider: "codex",
       authType: "access_token",
       accessToken: token,

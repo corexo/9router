@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { createProxyPool } from "@/models";
 
 // Relay worker source code deployed to Cloudflare
@@ -49,6 +51,7 @@ export default {
 // POST /api/proxy-pools/cloudflare-deploy
 export async function POST(request) {
   try {
+    const owner = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     const body = await request.json();
     const accountId = body.accountId?.trim();
     const apiToken = body.apiToken?.trim();
@@ -129,6 +132,7 @@ export async function POST(request) {
 
     // Create proxy pool entry with type cloudflare
     const proxyPool = await createProxyPool({
+      ownerUsername: owner?.username || null,
       name: projectName,
       proxyUrl: deployUrl,
       type: "cloudflare",

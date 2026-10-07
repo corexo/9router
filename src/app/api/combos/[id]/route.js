@@ -32,7 +32,7 @@ export async function PUT(request, { params }) {
     const { id } = await params;
     const caller = await getClaims();
     const prev = await getComboById(id);
-    if (prev && caller?.role === "moderator" && prev.ownerUsername !== caller.username) {
+    if (prev && caller?.username && prev.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const body = await request.json();
@@ -81,7 +81,7 @@ export async function DELETE(request, { params }) {
     const { id } = await params;
     const caller = await getClaims();
     const prev = await getComboById(id);
-    if (prev && caller?.role === "moderator" && prev.ownerUsername !== caller.username) {
+    if (prev && caller?.username && prev.ownerUsername !== caller.username) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     if (prev && BUILTIN_COMBOS.includes(prev.name.toLowerCase())) {

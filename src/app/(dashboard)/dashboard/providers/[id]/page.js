@@ -41,6 +41,7 @@ export default function ProviderDetailPage() {
   const providerId = params.id;
   const { getCaps } = useModelCaps();
   const [connections, setConnections] = useState([]);
+  const [currentUsername, setCurrentUsername] = useState(null);
   const [loading, setLoading] = useState(true);
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
@@ -304,16 +305,19 @@ export default function ProviderDetailPage() {
 
   const fetchConnections = useCallback(async () => {
     try {
-      const [connectionsRes, nodesRes, proxyPoolsRes, settingsRes] = await Promise.all([
+      const [connectionsRes, nodesRes, proxyPoolsRes, settingsRes, authRes] = await Promise.all([
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/provider-nodes", { cache: "no-store" }),
         fetch("/api/proxy-pools?isActive=true", { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
+        fetch("/api/auth/status", { cache: "no-store" }),
       ]);
       const connectionsData = await connectionsRes.json();
       const nodesData = await nodesRes.json();
       const proxyPoolsData = await proxyPoolsRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const authData = authRes.ok ? await authRes.json() : {};
+      setCurrentUsername(authData.username || null);
       if (connectionsRes.ok) {
         const filtered = (connectionsData.connections || []).filter(c => c.provider === providerId);
         setConnections(filtered);
@@ -464,10 +468,12 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
-    fetchConnections();
-    fetchAliases();
-    fetchCustomModels();
-    fetchDisabledModels();
+    queueMicrotask(() => {
+      fetchConnections();
+      fetchAliases();
+      fetchCustomModels();
+      fetchDisabledModels();
+    });
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
   // Live per-connection catalogs (cursor, zed): the static registry carries
@@ -479,19 +485,21 @@ export default function ProviderDetailPage() {
   useEffect(() => {
     const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codex";
     if (!isLiveCatalog) {
-      setLiveModels([]);
+      queueMicrotask(() => setLiveModels([]));
       return;
     }
 
     const connection = connections.find((item) => item.isActive !== false);
     if (!connection?.id) {
-      setLiveModels([]);
-      if (providerId === "zed") setLiveModelsError(null);
+      queueMicrotask(() => {
+        setLiveModels([]);
+        if (providerId === "zed") setLiveModelsError(null);
+      });
       return;
     }
 
     let cancelled = false;
-    if (providerId === "zed") setLiveModelsError(null);
+    if (providerId === "zed") queueMicrotask(() => setLiveModelsError(null));
     fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
@@ -884,6 +892,32 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleToggleShared = (connection) => {
+    const nextShared = !connection.isShared;
+    setConfirmState({
+      title: nextShared ? "Share provider account" : "Make provider account private",
+      message: nextShared
+        ? "Both users can route through this provider account and view its quota/usage. Credentials stay hidden. Only you can edit, re-authenticate, or delete it."
+        : "The other user will immediately lose access to this provider account and its quota/usage.",
+      confirmText: nextShared ? "Share account" : "Make private",
+      variant: nextShared ? "primary" : "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/providers/${connection.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ isShared: nextShared }),
+          });
+          if (res.ok) setConnections((current) => current.map((item) => item.id === connection.id ? { ...item, isShared: nextShared } : item));
+        } catch (error) {
+          console.error("Failed to update sharing:", error);
+        } finally {
+          setConfirmState(null);
+        }
+      },
+    });
+  };
+
   const handleUpdateConnectionStatus = async (id, isActive) => {
     try {
       const res = await fetch(`/api/providers/${id}`, {
@@ -949,7 +983,7 @@ export default function ProviderDetailPage() {
   };
 
   useEffect(() => {
-    setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
+    queueMicrotask(() => setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id))));
   }, [connections]);
 
   const selectedProxySummary = (() => {
@@ -1027,17 +1061,19 @@ export default function ProviderDetailPage() {
       {connections
         .map((conn, index) => (
           <div key={conn.id} className="flex min-w-0 items-stretch">
-            <div className="flex shrink-0 items-center pl-1 sm:pl-2">
+            {currentUsername && conn.ownerUsername === currentUsername && <div className="flex shrink-0 items-center pl-1 sm:pl-2">
               <input
                 type="checkbox"
                 checked={isSelected(conn.id)}
                 onChange={() => toggleSelectConnection(conn.id)}
                 className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
               />
-            </div>
+            </div>}
             <div className="flex-1 min-w-0">
               <ConnectionRow
                 connection={conn}
+                canManage={!!currentUsername && conn.ownerUsername === currentUsername}
+                onToggleShared={() => handleToggleShared(conn)}
                 proxyPools={proxyPools}
                 isOAuth={isOAuth}
                 isFirst={index === 0}
@@ -1045,7 +1081,7 @@ export default function ProviderDetailPage() {
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
-                autoPing={AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
+                autoPing={currentUsername && conn.ownerUsername === currentUsername && AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
                   on: autoPing.connections[conn.id] === true,
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),
                   provider: providerId,
@@ -1956,7 +1992,8 @@ export default function ProviderDetailPage() {
         onConfirm={confirmState?.onConfirm}
         title={confirmState?.title || "Confirm"}
         message={confirmState?.message}
-        variant="danger"
+        confirmText={confirmState?.confirmText || "Confirm"}
+        variant={confirmState?.variant || "danger"}
       />
     </div>
   );

@@ -35,26 +35,26 @@ export async function resolveModelAlias(alias) {
 /**
  * Get full model info (parse or resolve)
  */
-export async function getModelInfo(modelStr) {
+export async function getModelInfo(modelStr, { ownerUsername = null } = {}) {
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {
     // Provider-node prefixes are user-defined. They must not override built-in
     // provider ids/aliases such as `cf`, `cloudflare-ai`, `openai`, or `hf`.
     if (!RESERVED_PROVIDER_PREFIXES.has(parsed.providerAlias)) {
-      const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
+      const openaiNodes = await getProviderNodes({ type: "openai-compatible", ...(ownerUsername ? { ownerUsername } : {}) });
       const matchedOpenAI = openaiNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedOpenAI) {
         return { provider: matchedOpenAI.id, model: parsed.model };
       }
 
-      const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible" });
+      const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible", ...(ownerUsername ? { ownerUsername } : {}) });
       const matchedAnthropic = anthropicNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedAnthropic) {
         return { provider: matchedAnthropic.id, model: parsed.model };
       }
 
-      const embeddingNodes = await getProviderNodes({ type: "custom-embedding" });
+      const embeddingNodes = await getProviderNodes({ type: "custom-embedding", ...(ownerUsername ? { ownerUsername } : {}) });
       const matchedEmbedding = embeddingNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedEmbedding) {
         return { provider: matchedEmbedding.id, model: parsed.model };
@@ -68,7 +68,7 @@ export async function getModelInfo(modelStr) {
 
   // Check if this is a combo name before resolving as alias
   // This prevents combo names from being incorrectly routed to providers
-  const combo = await getComboByName(parsed.model);
+  const combo = await getComboByName(parsed.model, ownerUsername);
   if (combo) {
     // Return null provider to signal this should be handled as combo
     // The caller (handleChat) will detect this and handle it as combo
@@ -92,19 +92,19 @@ const BUILTIN_COMBOS = {
   }
 };
 
-export async function getComboModels(modelStr) {
+export async function getComboModels(modelStr, ownerUsername = null) {
   if (!modelStr || typeof modelStr !== "string") return null;
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
   // Check database first so user modifications take precedence
-  const combo = await getComboByName(modelStr);
+  const combo = await getComboByName(modelStr, ownerUsername);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }
 
   // Check hardcoded builtin combos as fallback only
-  if (BUILTIN_COMBOS[modelStr]) {
+  if (!ownerUsername && BUILTIN_COMBOS[modelStr]) {
     return BUILTIN_COMBOS[modelStr].models;
   }
   return null;

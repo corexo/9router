@@ -27,7 +27,7 @@ export async function GET() {
   try {
     const settings = await getSettings();
     const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
-    if (claims?.role === "moderator" && claims.username) {
+    if (claims?.username) {
       const { password, oidcClientSecret, ...safeSettings } = settings;
       const prefs = await getUserPrefs(claims.username);
       for (const key of USER_SCOPED_SETTING_KEYS) delete safeSettings[key];
@@ -55,12 +55,18 @@ export async function GET() {
 
 export async function PATCH(request) {
   try {
-    const body = await request.json();
+    let body = await request.json();
     const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
-    if (claims?.role === "moderator" && claims.username) {
-      const prefKeys = Object.keys(body).filter((key) => key !== "jevApiKey" && !["password", "newPassword", "currentPassword", "oidcClientSecret"].includes(key));
-      const prefs = await updateUserPrefs(claims.username, Object.fromEntries(prefKeys.map((key) => [key, body[key]])));
-      return NextResponse.json({ success: true, userPreferences: prefs }, { headers: SETTINGS_RESPONSE_HEADERS });
+    if (claims?.username) {
+      // User-scoped keys are per-user prefs; everything else stays global (shared infra).
+      const scoped = Object.fromEntries(Object.entries(body).filter(([key]) => USER_SCOPED_SETTING_KEYS.has(key)));
+      const globalKeys = Object.keys(body).filter((key) => !USER_SCOPED_SETTING_KEYS.has(key) && !["password", "newPassword", "currentPassword", "oidcClientSecret"].includes(key));
+      if (Object.keys(scoped).length) await updateUserPrefs(claims.username, scoped);
+      if (!globalKeys.length) {
+        const prefs = await getUserPrefs(claims.username);
+        return NextResponse.json({ success: true, userPreferences: prefs }, { headers: SETTINGS_RESPONSE_HEADERS });
+      }
+      body = Object.fromEntries(Object.entries(body).filter(([key]) => !USER_SCOPED_SETTING_KEYS.has(key)));
     }
 
     // Strip protected secrets before any internal handling sets them
