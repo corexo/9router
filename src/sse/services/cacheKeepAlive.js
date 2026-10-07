@@ -13,7 +13,7 @@ import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models.js";
 import { estimateQoderPromptTokens } from "open-sse/shared/qoder/contextTier.js";
-import { chooseSmallestContextModel } from "./cacheKeepAliveModel.js";
+import { chooseSmallestContextModel, isCacheKeepAliveModelBlacklisted } from "./cacheKeepAliveModel.js";
 
 let started = false;
 let intervalHandle = null;
@@ -95,6 +95,9 @@ async function executeProbe(candidate) {
     });
   const selectedProbeModel = chooseSmallestContextModel(supported, estimatedTokens);
   if (selectedProbeModel) model = selectedProbeModel.model;
+  else if (isCacheKeepAliveModelBlacklisted(model)) {
+    return { success: false, provider, model, error: "model_blacklisted_for_keepalive_no_context_fit" };
+  }
   const probeBody = {
     model: `${provider}/${model}`,
     messages: probeMessages,
