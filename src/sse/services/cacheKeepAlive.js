@@ -9,6 +9,11 @@ import { getSettings } from "../../lib/db/repos/settingsRepo.js";
 import { getProviderCredentials } from "./auth.js";
 import { checkAndRefreshToken } from "./tokenRefresh.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models.js";
+import { estimateQoderPromptTokens } from "open-sse/shared/qoder/contextTier.js";
+import { chooseSmallestContextModel, isCacheKeepAliveModelBlacklisted } from "./cacheKeepAliveModel.js";
 
 let started = false;
 let intervalHandle = null;
@@ -57,7 +62,7 @@ async function executeProbe(candidate) {
   }
 
   if (sessionKey && isSessionProviderPenalized(sessionKey, provider)) {
-    return { success: false, error: "provider_penalized_for_session" };
+    return { success: false, provider, model, error: "provider_penalized_for_session" };
   }
 
   // Get credentials for this account (preferring pinned connectionId)
@@ -66,7 +71,7 @@ async function executeProbe(candidate) {
   });
 
   if (!credentials || credentials.allRateLimited) {
-    return { success: false, error: "credentials_unavailable" };
+    return { success: false, provider, model, error: "credentials_unavailable" };
   }
 
   const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -77,7 +82,22 @@ async function executeProbe(candidate) {
     ...probePrefix.messages,
     { role: "user", content: "ping" },
   ];
-
+  const estimatedTokens = estimateQoderPromptTokens({ messages: probeMessages });
+  const models = await buildModelsList(["llm"], { skipDynamicFetch: true });
+  const providerAlias = PROVIDER_ID_TO_ALIAS[provider] || provider;
+  const supported = models
+    .filter((entry) => typeof entry.id === "string" && entry.id.startsWith(`${providerAlias}/`))
+    .map((entry) => {
+      const candidateModel = entry.id.slice(providerAlias.length + 1);
+      const caps = getCapabilitiesForModel(provider, candidateModel) || {};
+      const listed = Number(entry.context_length || entry.capabilities?.contextWindow || 0);
+      return { model: candidateModel, contextWindow: listed || Number(caps.contextWindow) || 0 };
+    });
+  const selectedProbeModel = chooseSmallestContextModel(supported, estimatedTokens);
+  if (selectedProbeModel) model = selectedProbeModel.model;
+  else if (isCacheKeepAliveModelBlacklisted(model)) {
+    return { success: false, provider, model, error: "model_blacklisted_for_keepalive_no_context_fit" };
+  }
   const probeBody = {
     model: `${provider}/${model}`,
     messages: probeMessages,
@@ -121,12 +141,16 @@ async function executeProbe(candidate) {
 
       return {
         success: true,
+        provider,
+        model,
         latencyMs,
         cachedTokens,
       };
     } else {
       return {
         success: false,
+        provider,
+        model,
         latencyMs,
         error: result?.error || "chat_core_failure",
       };
@@ -134,6 +158,8 @@ async function executeProbe(candidate) {
   } catch (err) {
     return {
       success: false,
+      provider,
+      model,
       latencyMs: Date.now() - startTime,
       error: err?.message || String(err),
     };
@@ -195,7 +221,7 @@ export async function runCacheKeepAliveTick() {
           log.info("KEEP_ALIVE", `✓ Probed session #${candidate.cacheId} (${candidate.probePrefix?.model || "unknown"}) in ${probeRes.latencyMs}ms (saved ~${probeRes.cachedTokens || 2000} tokens)`);
         } else {
           KEEP_ALIVE_STATS.failedPings += 1;
-          log.warn("KEEP_ALIVE", `✗ Probe failed for #${candidate.cacheId}: ${probeRes.error}`);
+          log.warn("KEEP_ALIVE", `✗ Probe failed for #${candidate.cacheId} (${probeRes.provider || candidate.probePrefix?.provider || "?"}/${probeRes.model || candidate.probePrefix?.model || "?"}): ${probeRes.error}`);
         }
 
         // Store latest 20 results for UI inspection

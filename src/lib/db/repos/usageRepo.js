@@ -1085,7 +1085,15 @@ export async function getCacheStats(period = "7d", ownerUsername = null) {
         entry.requests += 1;
         byProviderMap.set(provider, entry);
       }
-      const byProvider = [...byProviderMap.values()].map((entry) => ({ ...entry, hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0 }));
+      const providerNames = {
+        claude: "Claude (Anthropic)", glm: "Z.ai (GLM)", codex: "ChatGPT (OpenAI Codex)", gemini: "Google Gemini",
+        opencode: "OpenCode", ollama: "Ollama", "cloudflare-ai": "Cloudflare AI", github: "GitHub Models", nvidia: "NVIDIA NIM", jev: "Jev API",
+      };
+      const byProvider = [...byProviderMap.values()].map((entry) => ({
+        ...entry,
+        name: providerNames[entry.provider] || entry.provider,
+        hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0,
+      }));
       return {
         period,
         summary: { totalPromptTokens, totalCachedTokens, totalCompletionTokens, overallHitRate: totalPromptTokens ? Number(((totalCachedTokens / totalPromptTokens) * 100).toFixed(1)) : 0, totalRequests: rows.length, cachedRequests: rows.filter((row) => { const t = parseJson(row.tokens, {}) || {}; return Number(t.cached_tokens || t.cache_read_input_tokens || 0) > 0; }).length, estimatedSavingsUsd: Number(((totalCachedTokens / 1000000) * 2.7).toFixed(2)) },
@@ -1380,9 +1388,9 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
     const { getProviderConnections } = await import("./connectionsRepo.js");
     const allConnections = await getProviderConnections();
     const connections = ownerUsername
-      ? allConnections.filter((connection) => connection.ownerUsername === ownerUsername)
+      ? await getProviderConnections({ ownerUsername })
       : allConnections;
-    const ownConnectionIds = new Set(connections.map((connection) => connection.id));
+    const ownConnectionIds = new Set((ownerUsername ? connections.filter((connection) => connection.ownerUsername === ownerUsername) : connections).map((connection) => connection.id));
 
     const db = await getAdapter();
     const accountUsage = {};
@@ -1391,7 +1399,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const bucketMs = period === "today" ? (Date.now() - new Date().setHours(0, 0, 0, 0)) : (24 * 3600000);
       const since = new Date(Date.now() - bucketMs).toISOString();
       const rows = db.all(
-        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)" : ""}`,
+        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)" : ""}`,
         ownerUsername ? [since, ownerUsername] : [since]
       );
       for (const r of rows) {
@@ -1413,7 +1421,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const days = period === "30d" ? 30 : period === "60d" ? 60 : 7;
       const since = new Date(Date.now() - days * 86400000).toISOString();
       const rows = db.all(
-        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)`,
+        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)`,
         [since, ownerUsername]
       );
       for (const r of rows) {
@@ -1485,7 +1493,8 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const { getSessionCacheSnapshot, hydrateSessionCacheFromDb } = await import("@/lib/jev/sessionCache.js");
       await hydrateSessionCacheFromDb().catch(() => {});
       const list = getSessionCacheSnapshot({ includeTurns: true })
-        .map(({ cacheId, state, models, providers, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+        .map(({ cacheId, state, models, providers, connectionId, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+          connectionId,
           cacheId,
           state,
           models,
