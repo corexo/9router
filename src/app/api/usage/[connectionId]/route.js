@@ -2,6 +2,8 @@
 import "open-sse/index.js";
 
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
@@ -129,6 +131,10 @@ export async function GET(request, { params }) {
     // Get connection from database
     connection = await getProviderConnectionById(connectionId);
     if (!connection) {
+      return Response.json({ error: "Connection not found" }, { status: 404 });
+    }
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    if (claims?.username && connection.ownerUsername !== claims.username) {
       return Response.json({ error: "Connection not found" }, { status: 404 });
     }
 

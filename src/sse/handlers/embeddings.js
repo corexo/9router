@@ -4,8 +4,9 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
+  getApiKeyDetailsForRequest,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, hasUsers } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -45,6 +46,9 @@ export async function handleEmbeddings(request) {
 
   // Log API key (masked)
   const apiKey = extractApiKey(request);
+  const apiKeyDetails = apiKey ? await getApiKeyDetailsForRequest(request) : null;
+  const ownerUsername = apiKeyDetails?.ownerUsername || null;
+  const tenantScoped = await hasUsers();
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {
@@ -58,12 +62,14 @@ export async function handleEmbeddings(request) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
     }
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
   }
+
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!modelStr) {
     log.warn("EMBEDDINGS", "Missing model");
@@ -75,7 +81,7 @@ export async function handleEmbeddings(request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
   }
 
-  const modelInfo = await getModelInfo(modelStr);
+  const modelInfo = await getModelInfo(modelStr, { ownerUsername });
   if (!modelInfo.provider) {
     log.warn("EMBEDDINGS", "Invalid model format", { model: modelStr });
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
@@ -95,7 +101,9 @@ export async function handleEmbeddings(request) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = tenantScoped
+      ? await getProviderCredentials(provider, excludeConnectionIds, model, { ownerUsername, tenantScoped: true })
+      : await getProviderCredentials(provider, excludeConnectionIds, model);
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

@@ -5,7 +5,8 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, hasUsers } from "@/lib/localDb";
+import { getApiKeyDetailsForRequest } from "@/sse/services/auth.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -641,6 +642,12 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
+    const apiKeyDetails = await getApiKeyDetailsForRequest(request);
+    const tenantScoped = await hasUsers();
+    if (tenantScoped && !apiKeyDetails?.ownerUsername) {
+      return Response.json({ error: { message: "API key must be assigned to a user", type: "authentication_error" } }, { status: 401 });
+    }
+    const ownerUsername = apiKeyDetails?.ownerUsername || null;
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
     const rawIncludeDiscovered = request?.url ? new URL(request.url).searchParams.get("includeDiscovered") : null;
@@ -648,7 +655,7 @@ export async function GET(request) {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, includeDiscovered });
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch, includeDiscovered, ownerUsername });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });
