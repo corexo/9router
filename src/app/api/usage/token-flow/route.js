@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTokenFlowData } from "@/lib/usageDb";
+import { getRequestUsername } from "@/lib/auth/requestUser";
 
 const VALID_RANGES = new Set(["1h", "3h", "6h", "12h", "24h", "3d"]);
 
@@ -14,7 +15,7 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid range. Valid: 1h, 3h, 6h, 12h, 24h, 3d" }, { status: 400 });
     }
 
-    const data = await getTokenFlowData(range);
+    const data = await getTokenFlowData(range, await getRequestUsername());
     return NextResponse.json(data);
   } catch (error) {
     console.error("[API] Failed to get token flow data:", error);

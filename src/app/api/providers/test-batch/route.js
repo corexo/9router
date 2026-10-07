@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getProviderConnections } from "@/models";
 import {
   FREE_PROVIDERS,
@@ -49,7 +51,8 @@ export async function POST(request) {
       return NextResponse.json({ error: "mode is required" }, { status: 400 });
     }
 
-    const allConnections = await getProviderConnections({ isActive: true });
+    const caller = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const allConnections = await getProviderConnections({ isActive: true, ...(caller?.username ? { ownerUsername: caller.username, ownerOnly: true } : {}) });
 
     let connectionsToTest = [];
     if (mode === "provider" && providerId) {

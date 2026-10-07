@@ -12,15 +12,17 @@ function rowToPool(row) {
     testStatus: row.testStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ownerUsername: row.ownerUsername || null,
   };
 }
 
 function poolToRow(p) {
-  const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
+  const { id, isActive, testStatus, ownerUsername, createdAt, updatedAt, ...rest } = p;
   return {
     id,
     isActive: isActive === false ? 0 : 1,
     testStatus: testStatus ?? null,
+    ownerUsername: ownerUsername ?? null,
     data: stringifyJson(rest),
     createdAt,
     updatedAt,
@@ -30,12 +32,12 @@ function poolToRow(p) {
 function upsert(db, p) {
   const r = poolToRow(p);
   db.run(
-    `INSERT INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?)
+    `INSERT INTO proxyPools(id, isActive, testStatus, ownerUsername, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        isActive=excluded.isActive, testStatus=excluded.testStatus,
-       data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.isActive, r.testStatus, r.data, r.createdAt, r.updatedAt]
+       ownerUsername=COALESCE(excluded.ownerUsername, proxyPools.ownerUsername), data=excluded.data, updatedAt=excluded.updatedAt`,
+    [r.id, r.isActive, r.testStatus, r.ownerUsername, r.data, r.createdAt, r.updatedAt]
   );
 }
 
@@ -45,15 +47,19 @@ export async function getProxyPools(filter = {}) {
   const params = [];
   if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
   if (filter.testStatus) { where.push("testStatus = ?"); params.push(filter.testStatus); }
+  if (filter.ownerUsername) { where.push("ownerUsername = ?"); params.push(filter.ownerUsername); }
   const sql = `SELECT * FROM proxyPools${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const list = db.all(sql, params).map(rowToPool);
   list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   return list;
 }
 
-export async function getProxyPoolById(id) {
+export async function getProxyPoolById(id, ownerUsername = null) {
   const db = await getAdapter();
-  return rowToPool(db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]));
+  const row = ownerUsername
+    ? db.get("SELECT * FROM proxyPools WHERE id = ? AND ownerUsername = ?", [id, ownerUsername])
+    : db.get("SELECT * FROM proxyPools WHERE id = ?", [id]);
+  return rowToPool(row);
 }
 
 export async function createProxyPool(data) {
@@ -65,6 +71,7 @@ export async function createProxyPool(data) {
     proxyUrl: data.proxyUrl,
     noProxy: data.noProxy || "",
     type: data.type || "http",
+    ownerUsername: data.ownerUsername ?? null,
     isActive: data.isActive !== undefined ? data.isActive : true,
     strictProxy: data.strictProxy === true,
     testStatus: data.testStatus || "unknown",

@@ -1,7 +1,9 @@
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
 
-import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
+import { getProviderConnectionById, getProviderConnectionForUser, updateProviderConnection } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
@@ -126,11 +128,12 @@ export async function GET(request, { params }) {
     const force = new URL(request.url).searchParams.get("force") === "1";
 
 
-    // Get connection from database
-    connection = await getProviderConnectionById(connectionId);
-    if (!connection) {
-      return Response.json({ error: "Connection not found" }, { status: 404 });
-    }
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    connection = claims?.username
+      ? await getProviderConnectionForUser(connectionId, claims.username)
+      : await getProviderConnectionById(connectionId);
+    if (!connection) return Response.json({ error: "Connection not found" }, { status: 404 });
+    const isOwner = !claims?.username || connection.ownerUsername === claims.username;
 
     // Allow OAuth connections, plus whitelisted apikey providers (glm/minimax/kiro/...)
     // Kiro's headless api-key flow persists authType "api_key" (underscore) while
@@ -156,7 +159,7 @@ export async function GET(request, { params }) {
     };
 
     // Refresh credentials only for OAuth connections (apikey has no token refresh)
-    if (isOAuth) {
+    if (isOAuth && isOwner) {
       try {
         const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);
         connection = result.connection;

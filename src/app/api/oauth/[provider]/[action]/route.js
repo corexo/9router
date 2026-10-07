@@ -46,7 +46,7 @@ import {
 import { detectIdeInstalled } from "@/lib/oauth/utils/ideDetect";
 import { ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 
-async function completeXaiManualCode(code, state) {
+async function completeXaiManualCode(code, state, ownerUsername = null) {
   const session = state ? getXaiSessionStatus(state) : null;
   if (!session) {
     throw new Error("xAI OAuth session not found; restart the login flow and paste the code again");
@@ -62,6 +62,7 @@ async function completeXaiManualCode(code, state) {
       state
     );
     const connection = await createProviderConnection({
+      ownerUsername,
       provider: "xai",
       authType: "oauth",
       ...tokenData,
@@ -295,6 +296,8 @@ export async function GET(request, { params }) {
 export async function POST(request, { params }) {
   try {
     const { provider, action } = await params;
+    const ownerClaims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const ownerUsername = ownerClaims?.username || null;
     let body;
     try {
       body = await request.json();
@@ -346,6 +349,7 @@ export async function POST(request, { params }) {
 
         try {
           const connection = await createProviderConnection({
+            ownerUsername,
             provider: "xiaomi-mimo",
             authType: "oauth",
             accessToken,
@@ -391,6 +395,7 @@ export async function POST(request, { params }) {
         try {
           const tokenData = await exchangeTokens(provider, token, null, null, state);
           const connection = await createProviderConnection({
+            ownerUsername,
             provider,
             authType: provider === "windsurf" ? "api_key" : "oauth",
             ...tokenData,
@@ -436,6 +441,7 @@ export async function POST(request, { params }) {
         if (planType) providerSpecificData.chatgptPlanType = planType;
 
         const connection = await createProviderConnection({
+            ownerUsername,
           provider,
           authType: "access_token",
           accessToken: code,
@@ -469,12 +475,9 @@ export async function POST(request, { params }) {
         ...(systemId ? { systemId } : {}),
       });
 
-      const cookieStore = await cookies();
-      const claims = await verifyDashboardAuthToken(cookieStore.get("auth_token")?.value).catch(() => null);
-
-      // Save to database
+      // Save to the current user's private account set.
       const connection = await createProviderConnection({
-        ownerUsername: claims?.username || null,
+          ownerUsername,
         provider,
         authType: "oauth",
         ...tokenData,
@@ -531,6 +534,7 @@ export async function POST(request, { params }) {
         // Save to database (legacy kimi-coding OAuth → dual-auth kimi)
         const providerId = provider === "kimi-coding" ? "kimi" : provider;
         const connection = await createProviderConnection({
+            ownerUsername,
           provider: providerId,
           authType: "oauth",
           ...result.tokens,
@@ -565,7 +569,7 @@ export async function POST(request, { params }) {
         return NextResponse.json({ error: "Manual code only supported for xai" }, { status: 400 });
       }
       const { code, state } = body;
-      const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim());
+      const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim(), ownerUsername);
       return NextResponse.json({ success: true, connection });
     }
 

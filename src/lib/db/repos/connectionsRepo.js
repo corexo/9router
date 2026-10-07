@@ -47,11 +47,12 @@ function rowToConn(row) {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ownerUsername: row.ownerUsername || null,
+    isShared: row.isShared === 1 || row.isShared === true,
   };
 }
 
 function connToRow(c) {
-  const { id, provider, authType, name, email, priority, isActive, ownerUsername, createdAt, updatedAt, ...rest } = c;
+  const { id, provider, authType, name, email, priority, isActive, ownerUsername, isShared, createdAt, updatedAt, ...rest } = c;
   return {
     id,
     provider,
@@ -64,20 +65,21 @@ function connToRow(c) {
     createdAt,
     updatedAt,
     ownerUsername: ownerUsername ?? null,
+    isShared: isShared === true ? 1 : 0,
   };
 }
 
 function upsert(db, c) {
   const r = connToRow(c);
   db.run(
-    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, ownerUsername, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, ownerUsername, isShared, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        provider=excluded.provider, authType=excluded.authType, name=excluded.name,
        email=excluded.email, priority=excluded.priority, isActive=excluded.isActive,
        ownerUsername=COALESCE(excluded.ownerUsername, providerConnections.ownerUsername),
-       data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.ownerUsername, r.data, r.createdAt, r.updatedAt]
+       isShared=excluded.isShared, data=excluded.data, updatedAt=excluded.updatedAt`,
+    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.ownerUsername, r.isShared, r.data, r.createdAt, r.updatedAt]
   );
 }
 
@@ -98,7 +100,10 @@ export async function getProviderConnections(filter = {}) {
   const params = [];
   if (filter.provider) { where.push("provider = ?"); params.push(filter.provider); }
   if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
-  if (filter.ownerUsername) { where.push("ownerUsername = ?"); params.push(filter.ownerUsername); }
+  if (filter.ownerUsername) {
+    where.push(filter.ownerOnly ? "ownerUsername = ?" : "(ownerUsername = ? OR isShared = 1)");
+    params.push(filter.ownerUsername);
+  }
   const sql = `SELECT * FROM providerConnections${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const rows = db.all(sql, params);
   const list = rows.map(rowToConn);
@@ -112,9 +117,18 @@ export async function getProviderConnectionById(id) {
   return rowToConn(row);
 }
 
+export async function getProviderConnectionForUser(id, username, { ownerOnly = false } = {}) {
+  if (!username) return null;
+  const db = await getAdapter();
+  const row = ownerOnly
+    ? db.get("SELECT * FROM providerConnections WHERE id = ? AND ownerUsername = ?", [id, username])
+    : db.get("SELECT * FROM providerConnections WHERE id = ? AND (ownerUsername = ? OR isShared = 1)", [id, username]);
+  return rowToConn(row);
+}
+
 // Internal sync reorder — must be called INSIDE a transaction
-function reorderInTx(db, providerId) {
-  const list = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [providerId]).map(rowToConn);
+function reorderInTx(db, providerId, ownerUsername = null) {
+  const list = db.all("SELECT * FROM providerConnections WHERE provider = ? AND ownerUsername IS ?", [providerId, ownerUsername]).map(rowToConn);
   list.sort((a, b) => {
     const pDiff = (a.priority || 0) - (b.priority || 0);
     if (pDiff !== 0) return pDiff;
@@ -131,7 +145,7 @@ export async function createProviderConnection(data) {
   let result;
 
   db.transaction(() => {
-    const all = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
+    const all = db.all("SELECT * FROM providerConnections WHERE provider = ? AND ownerUsername IS ?", [data.provider, data.ownerUsername ?? null]).map(rowToConn);
 
     let existing = null;
     if (data.authType === "oauth" && data.email) {
@@ -209,7 +223,7 @@ export async function createProviderConnection(data) {
     if (data.email !== undefined) conn.email = data.email;
 
     upsert(db, conn);
-    reorderInTx(db, data.provider);
+    reorderInTx(db, data.provider, conn.ownerUsername);
     result = conn;
   });
 
@@ -227,7 +241,7 @@ export async function updateProviderConnection(id, data) {
     const normalized = resetHealthStateOnActivation(existing, data);
     const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
     upsert(db, merged);
-    if (data.priority !== undefined) reorderInTx(db, existing.provider);
+    if (data.priority !== undefined) reorderInTx(db, existing.provider, existing.ownerUsername);
     result = merged;
   });
   return result;
@@ -240,16 +254,20 @@ export async function deleteProviderConnection(id) {
     const row = db.get(`SELECT provider FROM providerConnections WHERE id = ?`, [id]);
     if (!row) return;
     db.run(`DELETE FROM providerConnections WHERE id = ?`, [id]);
-    reorderInTx(db, row.provider);
+    reorderInTx(db, row.provider, row.ownerUsername);
     ok = true;
   });
   return ok;
 }
 
-export async function deleteProviderConnectionsByProvider(providerId) {
+export async function deleteProviderConnectionsByProvider(providerId, ownerUsername = null) {
   const db = await getAdapter();
-  const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
-  db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
+  const sql = ownerUsername
+    ? "SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ? AND ownerUsername = ?"
+    : "SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?";
+  const before = ownerUsername ? db.get(sql, [providerId, ownerUsername]) : db.get(sql, [providerId]);
+  if (ownerUsername) db.run("DELETE FROM providerConnections WHERE provider = ? AND ownerUsername = ?", [providerId, ownerUsername]);
+  else db.run("DELETE FROM providerConnections WHERE provider = ?", [providerId]);
   return before?.n || 0;
 }
 

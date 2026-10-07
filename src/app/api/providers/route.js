@@ -31,7 +31,7 @@ function normalizeProxyConfig(body = {}) {
   };
 }
 
-async function normalizeProxyPoolId(proxyPoolId) {
+async function normalizeProxyPoolId(proxyPoolId, ownerUsername = null) {
   if (proxyPoolId === undefined || proxyPoolId === null || proxyPoolId === "" || proxyPoolId === "__none__") {
     return { proxyPoolId: null };
   }
@@ -41,7 +41,7 @@ async function normalizeProxyPoolId(proxyPoolId) {
     return { proxyPoolId: null };
   }
 
-  const proxyPool = await getProxyPoolById(normalizedId);
+  const proxyPool = await getProxyPoolById(normalizedId, ownerUsername);
   if (!proxyPool) {
     return { error: "Proxy pool not found" };
   }
@@ -53,12 +53,12 @@ async function normalizeProxyPoolId(proxyPoolId) {
 export async function GET() {
   try {
     const caller = await getClaims();
-    const connections = await getProviderConnections(caller?.role === "moderator" ? { ownerUsername: caller.username } : {});
+    const connections = await getProviderConnections(caller?.username ? { ownerUsername: caller.username } : {});
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};
     try {
-      const nodes = await getProviderNodes();
+      const nodes = await getProviderNodes(caller?.username ? { ownerUsername: caller.username } : {});
       for (const node of nodes) {
         if (node.id && node.name) nodeNameMap[node.id] = node.name;
       }
@@ -66,11 +66,12 @@ export async function GET() {
 
     // Hide sensitive fields, enrich name for compatible providers
     const safeConnections = connections.map(c => {
+      const isOwner = !caller?.username || c.ownerUsername === caller.username;
       const isCompatible = isOpenAICompatibleProvider(c.provider) || isAnthropicCompatibleProvider(c.provider);
       const name = isCompatible
         ? (c.name || nodeNameMap[c.provider] || c.providerSpecificData?.nodeName || c.provider)
         : c.name;
-      return {
+      const safe = {
         ...c,
         name,
         apiKey: undefined,
@@ -78,6 +79,8 @@ export async function GET() {
         refreshToken: undefined,
         idToken: undefined,
       };
+      if (!isOwner) delete safe.providerSpecificData;
+      return safe;
     });
 
     return NextResponse.json({ connections: safeConnections });
@@ -99,7 +102,7 @@ export async function POST(request) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });
     }
 
-    const proxyPoolResult = await normalizeProxyPoolId(body.proxyPoolId);
+    const proxyPoolResult = await normalizeProxyPoolId(body.proxyPoolId, caller?.username || null);
     if (proxyPoolResult.error) {
       return NextResponse.json({ error: proxyPoolResult.error }, { status: 400 });
     }

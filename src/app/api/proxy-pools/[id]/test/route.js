@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getProxyPoolById, updateProxyPool } from "@/models";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { fetch as undiciFetch } from "undici";
@@ -37,7 +39,8 @@ async function testVercelRelay(relayUrl, timeoutMs = 10000) {
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
-    const proxyPool = await getProxyPoolById(id);
+    const caller = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const proxyPool = caller?.username ? await getProxyPoolById(id, caller.username) : await getProxyPoolById(id);
 
     if (!proxyPool) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });

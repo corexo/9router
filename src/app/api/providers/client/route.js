@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getProviderConnections } from "@/lib/localDb";
 import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 
 const SAFE_FIELDS = [
-  "id", "provider", "authType", "name", "email", "displayName",
+  "id", "provider", "authType", "name", "email", "displayName", "ownerUsername", "isShared",
   "priority", "globalPriority", "isActive", "defaultModel",
   "testStatus", "lastError", "lastErrorAt", "errorCode",
   "expiresAt", "lastUsedAt", "consecutiveUseCount",
@@ -29,7 +31,7 @@ function maskName(name) {
   return name;
 }
 
-function sanitize(c) {
+function sanitize(c, callerUsername = null) {
   const safe = {};
   for (const f of SAFE_FIELDS) if (c[f] !== undefined) safe[f] = c[f];
   if (safe.name) safe.name = maskName(safe.name);
@@ -39,6 +41,11 @@ function sanitize(c) {
       if (c.providerSpecificData[f] !== undefined) psd[f] = c.providerSpecificData[f];
     }
     safe.providerSpecificData = psd;
+  }
+  if (callerUsername && c.ownerUsername !== callerUsername) {
+    delete safe.providerSpecificData;
+    delete safe.lastError;
+    delete safe.lastErrorAt;
   }
   return safe;
 }
@@ -85,7 +92,8 @@ export async function GET(request) {
     const page = parsePositiveInt(searchParams.get("page"), 1);
     const pageSize = Math.min(parsePositiveInt(searchParams.get("pageSize"), DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
 
-    const allConnections = await getProviderConnections();
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const allConnections = await getProviderConnections(claims?.username ? { ownerUsername: claims.username } : {});
     const eligibleConnections = allConnections.filter(isUsageEligible);
     const providerOptions = Array.from(new Set(eligibleConnections.map((conn) => conn.provider))).sort();
 
@@ -104,7 +112,7 @@ export async function GET(request) {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const currentPage = Math.min(page, totalPages);
     const offset = (currentPage - 1) * pageSize;
-    const pageConnections = sortedConnections.slice(offset, offset + pageSize).map(sanitize);
+    const pageConnections = sortedConnections.slice(offset, offset + pageSize).map((connection) => sanitize(connection, claims?.username || null));
 
     return NextResponse.json({
       connections: pageConnections,

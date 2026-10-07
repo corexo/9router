@@ -1,7 +1,9 @@
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
 
-import { getProviderConnectionById } from "@/lib/localDb";
+import { getProviderConnectionById, getProviderConnectionForUser } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import {
   consumeCodexRateLimitResetCredit,
   getCodexRateLimitResetCredits,
@@ -27,8 +29,10 @@ function isAuthExpiredError(error) {
 
 const SUPPORTED_RESET_PROVIDERS = ["codex", "claude", "glm", "glm-cn"];
 
-async function getConnectionAndProxy(connectionId) {
-  const connection = await getProviderConnectionById(connectionId);
+async function getConnectionAndProxy(connectionId, username = null) {
+  const connection = username
+    ? await getProviderConnectionForUser(connectionId, username)
+    : await getProviderConnectionById(connectionId);
   if (!connection) {
     return { response: Response.json({ error: "Connection not found" }, { status: 404 }) };
   }
@@ -69,12 +73,13 @@ export async function GET(_request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
-    const resolved = await getConnectionAndProxy(connectionId);
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const resolved = await getConnectionAndProxy(connectionId, claims?.username || null);
     if (resolved.response) return resolved.response;
     ({ connection } = resolved);
     const { isOAuth, proxyOptions } = resolved;
 
-    if (isOAuth && connection.provider === "codex") {
+    if (isOAuth && connection.provider === "codex" && (!claims?.username || connection.ownerUsername === claims.username)) {
       const refreshed = await refreshOAuthConnection(connection, proxyOptions);
       if (refreshed.response) return refreshed.response;
       connection = refreshed.connection;
@@ -112,10 +117,14 @@ export async function POST(_request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
-    const resolved = await getConnectionAndProxy(connectionId);
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const resolved = await getConnectionAndProxy(connectionId, claims?.username || null);
     if (resolved.response) return resolved.response;
     ({ connection } = resolved);
     const { isOAuth, proxyOptions } = resolved;
+    if (claims?.username && connection.ownerUsername !== claims.username) {
+      return Response.json({ error: "Only the account owner can reset this provider quota" }, { status: 403 });
+    }
 
     if (isOAuth && connection.provider === "codex") {
       const refreshed = await refreshOAuthConnection(connection, proxyOptions);

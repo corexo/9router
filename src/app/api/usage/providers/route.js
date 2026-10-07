@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDistinctProviders } from "@/lib/requestDetailsDb";
-import { getProviderNodes } from "@/lib/localDb";
+import { getProviderConnections, getProviderNodes } from "@/lib/localDb";
+import { getRequestUsername } from "@/lib/auth/requestUser";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
 /**
@@ -9,11 +10,13 @@ import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
  */
 export async function GET() {
   try {
-    // Query DISTINCT provider column directly — avoids parsing every row's
-    // full JSON blob (can be hundreds of MB), which previously caused OOM.
-    const providerIds = await getDistinctProviders();
+    const username = await getRequestUsername();
+    const visibleProviders = username
+      ? new Set((await getProviderConnections({ ownerUsername: username })).map((connection) => connection.provider))
+      : null;
+    const providerIds = (await getDistinctProviders()).filter((providerId) => !visibleProviders || visibleProviders.has(providerId));
 
-    const providerNodes = await getProviderNodes();
+    const providerNodes = await getProviderNodes(username ? { ownerUsername: username } : {});
     const nodeMap = {};
     for (const node of providerNodes) {
       nodeMap[node.id] = node.name;

@@ -6,7 +6,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, canManage = false, onToggleShared, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -138,8 +138,8 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
   return (
     <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
       <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center sm:gap-3">
-        {/* Priority arrows */}
-        <div className="flex shrink-0 flex-col">
+        {/* Priority arrows: owners only */}
+        {canManage && <div className="flex shrink-0 flex-col">
           <button
             onClick={onMoveUp}
             disabled={isFirst}
@@ -154,7 +154,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
           >
             <span className="material-symbols-outlined text-sm">keyboard_arrow_down</span>
           </button>
-        </div>
+        </div>}
         <span className="material-symbols-outlined shrink-0 text-base text-text-muted">
           {authIcon}
         </span>
@@ -170,6 +170,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
+            {connection.isShared && <Badge variant="success" size="sm">Shared</Badge>}
             {hasAnyProxy && (
               <Badge variant={proxyBadgeVariant} size="sm">
                 Proxy
@@ -191,7 +192,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               </Badge>
             )}
           </div>
-          {hasAnyProxy && (
+          {canManage && hasAnyProxy && (
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[420px]" title={proxyDisplayText}>
                 {proxyDisplayText}
@@ -213,7 +214,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
       <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
         <div className="grid flex-1 grid-cols-3 gap-1 sm:flex sm:flex-none">
           {/* Proxy button with inline dropdown */}
-          {(proxyPools || []).length > 0 && (
+          {canManage && (proxyPools || []).length > 0 && (
             <div className="relative" ref={proxyDropdownRef}>
               <button
                 onClick={() => setShowProxyDropdown((v) => !v)}
@@ -257,21 +258,25 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               </button>
             </Tooltip>
           )}
-          <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
+          {canManage && <button onClick={onToggleShared} className={`flex flex-col items-center rounded px-2 py-1 ${connection.isShared ? "text-primary" : "text-text-muted hover:text-primary"} hover:bg-black/5 dark:hover:bg-white/5`} title={connection.isShared ? "Shared with all users; only you can manage this account" : "Keep private; only you can use this account"}>
+            <span className="material-symbols-outlined text-[18px]">{connection.isShared ? "group" : "share"}</span>
+            <span className="text-[10px] leading-tight">{connection.isShared ? "Shared" : "Share"}</span>
+          </button>}
+          {canManage && <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
             <span className="material-symbols-outlined text-[18px]">edit</span>
             <span className="text-[10px] leading-tight">Edit</span>
-          </button>
-          <button onClick={onDelete} className="flex flex-col items-center rounded px-2 py-1 text-red-500 hover:bg-red-500/10">
+          </button>}
+          {canManage && <button onClick={onDelete} className="flex flex-col items-center rounded px-2 py-1 text-red-500 hover:bg-red-500/10">
             <span className="material-symbols-outlined text-[18px]">delete</span>
             <span className="text-[10px] leading-tight">Delete</span>
-          </button>
+          </button>}
         </div>
-        <Toggle
+        {canManage && <Toggle
           size="sm"
           checked={connection.isActive ?? true}
           onChange={onToggleActive}
           title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
-        />
+        />}
       </div>
     </div>
   );
@@ -286,6 +291,8 @@ ConnectionRow.propTypes = {
     modelLockUntil: PropTypes.string,
     testStatus: PropTypes.string,
     isActive: PropTypes.bool,
+    isShared: PropTypes.bool,
+    ownerUsername: PropTypes.string,
     lastError: PropTypes.string,
     priority: PropTypes.number,
     globalPriority: PropTypes.number,
@@ -298,6 +305,8 @@ ConnectionRow.propTypes = {
     isActive: PropTypes.bool,
   })),
   isOAuth: PropTypes.bool.isRequired,
+  canManage: PropTypes.bool,
+  onToggleShared: PropTypes.func,
   isFirst: PropTypes.bool.isRequired,
   isLast: PropTypes.bool.isRequired,
   onMoveUp: PropTypes.func.isRequired,

@@ -345,8 +345,121 @@ function loadDaysInRange(adapter, maxDays) {
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
 }
 
-export async function getUsageStats(period = "all") {
+async function getUsageStatsForOwner(db, period, ownerUsername) {
+  const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
+    import("./connectionsRepo.js"),
+    import("./apiKeysRepo.js"),
+    import("./nodesRepo.js"),
+  ]);
+  const visibleConnections = await getProviderConnections({ ownerUsername });
+  const connectionMap = Object.fromEntries(visibleConnections.map((c) => [c.id, c.displayName || c.name || c.email || c.id]));
+  const nodes = await getProviderNodes({ ownerUsername });
+  const providerNodeNameMap = Object.fromEntries(nodes.map((n) => [n.id, n.name]));
+  const allKeys = await getApiKeys();
+  const keyMap = new Map(allKeys.filter((key) => key.ownerUsername === ownerUsername).map((key) => [key.key, key]));
+
+  const now = new Date();
+  let since = new Date(0);
+  if (period === "today") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    since = start;
+  } else if (period === "24h") {
+    since = new Date(now.getTime() - 24 * 3600000);
+  } else if (["7d", "30d", "60d"].includes(period)) {
+    const days = Number(period.slice(0, -1));
+    since = new Date(now.getTime() - days * 86400000);
+  }
+
+  const rows = db.all(
+    `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, tokens, cost, status FROM usageHistory
+     WHERE apiKey IN (SELECT key FROM apiKeys WHERE ownerUsername = ?) AND timestamp >= ? ORDER BY id DESC`,
+    [ownerUsername, since.toISOString()]
+  );
+
+  const stats = {
+    totalRequests: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalCachedTokens: 0,
+    totalCost: 0,
+    byProvider: {},
+    byModel: {},
+    byAccount: {},
+    byApiKey: {},
+    byEndpoint: {},
+    last10Minutes: [],
+    pending: { byModel: {}, byAccount: {} },
+    activeRequests: [],
+    recentRequests: [],
+    errorProvider: "",
+  };
+
+  const minuteStartNow = Math.floor(now.getTime() / 60000) * 60000;
+  const last10Map = {};
+  for (let i = 0; i < 10; i += 1) {
+    const ts = minuteStartNow - (9 - i) * 60000;
+    last10Map[ts] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
+    stats.last10Minutes.push(last10Map[ts]);
+  }
+
+  const seen = new Set();
+  for (const row of rows) {
+    const tokenJson = parseJson(row.tokens, {}) || {};
+    const promptTokens = Number(row.promptTokens || tokenJson.prompt_tokens || tokenJson.input_tokens || 0);
+    const completionTokens = Number(row.completionTokens || tokenJson.completion_tokens || tokenJson.output_tokens || 0);
+    const cachedTokens = Number(tokenJson.cached_tokens || tokenJson.cache_read_input_tokens || 0);
+    const cost = Number(row.cost || 0);
+    stats.totalRequests += 1;
+    stats.totalPromptTokens += promptTokens;
+    stats.totalCompletionTokens += completionTokens;
+    stats.totalCachedTokens += cachedTokens;
+    stats.totalCost += cost;
+
+    const addTo = (target, label, extra = {}) => {
+      if (!target[label]) target[label] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, ...extra };
+      target[label].requests += 1;
+      target[label].promptTokens += promptTokens;
+      target[label].completionTokens += completionTokens;
+      target[label].cachedTokens += cachedTokens;
+      target[label].cost += cost;
+      if (extra.lastUsed && extra.lastUsed > target[label].lastUsed) target[label].lastUsed = extra.lastUsed;
+    };
+
+    const provider = row.provider || "";
+    addTo(stats.byProvider, provider || "unknown");
+    const model = row.model || "unknown";
+    const providerDisplayName = providerNodeNameMap[provider] || provider;
+    addTo(stats.byModel, provider ? `${model} (${provider})` : model, { rawModel: model, provider: providerDisplayName, lastUsed: row.timestamp });
+    if (row.connectionId) {
+      const accountName = connectionMap[row.connectionId] || `Account ${String(row.connectionId).slice(0, 8)}...`;
+      addTo(stats.byAccount, `${model} (${provider} - ${accountName})`, { rawModel: model, provider: providerDisplayName, connectionId: row.connectionId, accountName, lastUsed: row.timestamp });
+    }
+    const keyInfo = keyMap.get(row.apiKey);
+    const apiKeyMasked = maskApiKey(row.apiKey);
+    addTo(stats.byApiKey, apiKeyMasked || "local-no-key", { rawModel: model, provider: providerDisplayName, apiKeyMasked, keyName: keyInfo?.name || "Own API Key", apiKeyKey: apiKeyMasked || "local-no-key", lastUsed: row.timestamp });
+    addTo(stats.byEndpoint, row.endpoint || "Unknown", { endpoint: row.endpoint || "Unknown", rawModel: model, provider: providerDisplayName, lastUsed: row.timestamp });
+
+    const rowMinute = Math.floor(new Date(row.timestamp).getTime() / 60000) * 60000;
+    if (last10Map[rowMinute]) {
+      last10Map[rowMinute].requests += 1;
+      last10Map[rowMinute].promptTokens += promptTokens;
+      last10Map[rowMinute].completionTokens += completionTokens;
+      last10Map[rowMinute].cost += cost;
+    }
+
+    const recentKey = `${model}|${provider}|${promptTokens}|${completionTokens}|${String(row.timestamp).slice(0, 16)}`;
+    if (stats.recentRequests.length < 20 && !seen.has(recentKey) && (promptTokens > 0 || completionTokens > 0)) {
+      seen.add(recentKey);
+      stats.recentRequests.push({ timestamp: row.timestamp, model, provider, promptTokens, completionTokens, cachedTokens, status: row.status || "ok" });
+    }
+  }
+  stats.totalCost = Number(stats.totalCost.toFixed(6));
+  return stats;
+}
+
+export async function getUsageStats(period = "all", ownerUsername = null) {
   const db = await getAdapter();
+  if (ownerUsername) return getUsageStatsForOwner(db, period, ownerUsername);
 
   const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
     import("./connectionsRepo.js"),
@@ -660,7 +773,7 @@ export async function getUsageStats(period = "all") {
   return stats;
 }
 
-export async function getChartData(period = "7d") {
+export async function getChartData(period = "7d", ownerUsername = null) {
   const db = await getAdapter();
   const now = Date.now();
 
@@ -675,8 +788,8 @@ export async function getChartData(period = "7d") {
     const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
 
     const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
-      [new Date(startTime).toISOString()]
+      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?${ownerUsername ? " AND apiKey IN (SELECT key FROM apiKeys WHERE ownerUsername = ?)" : ""}`,
+      ownerUsername ? [new Date(startTime).toISOString(), ownerUsername] : [new Date(startTime).toISOString()]
     );
     for (const r of rows) {
       const t = new Date(r.timestamp).getTime();
@@ -698,8 +811,8 @@ export async function getChartData(period = "7d") {
     const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
 
     const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
-      [new Date(startTime).toISOString()]
+      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?${ownerUsername ? " AND apiKey IN (SELECT key FROM apiKeys WHERE ownerUsername = ?)" : ""}`,
+      ownerUsername ? [new Date(startTime).toISOString(), ownerUsername] : [new Date(startTime).toISOString()]
     );
     for (const r of rows) {
       const t = new Date(r.timestamp).getTime();
@@ -714,6 +827,31 @@ export async function getChartData(period = "7d") {
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
   const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  // Tenant charts use exact API-key history; shared global daily rollups are never reused.
+  if (ownerUsername) {
+    const start = new Date(today);
+    start.setDate(start.getDate() - (bucketCount - 1));
+    start.setHours(0, 0, 0, 0);
+    const rows = db.all(
+      "SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ? AND apiKey IN (SELECT key FROM apiKeys WHERE ownerUsername = ?)",
+      [start.toISOString(), ownerUsername]
+    );
+    const buckets = Array.from({ length: bucketCount }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (bucketCount - 1 - i));
+      return { dateKey: d.toISOString().slice(0, 10), label: labelFn(d), tokens: 0, cost: 0 };
+    });
+    const byDate = new Map(buckets.map((bucket) => [bucket.dateKey, bucket]));
+    for (const row of rows) {
+      const bucket = byDate.get(String(row.timestamp).slice(0, 10));
+      if (bucket) {
+        bucket.tokens += (row.promptTokens || 0) + (row.completionTokens || 0);
+        bucket.cost += row.cost || 0;
+      }
+    }
+    return buckets.map(({ label, tokens, cost }) => ({ label, tokens, cost }));
+  }
 
   // Build map of dateKey → day data
   const dayRows = loadDaysInRange(db, bucketCount);
@@ -733,7 +871,7 @@ export async function getChartData(period = "7d") {
   });
 }
 
-export async function getTokenFlowData(range = "1h") {
+export async function getTokenFlowData(range = "1h", ownerUsername = null) {
   const db = await getAdapter();
   const now = Date.now();
 
@@ -776,8 +914,8 @@ export async function getTokenFlowData(range = "1h") {
   });
 
   const rows = db.all(
-    `SELECT timestamp, promptTokens, completionTokens FROM usageHistory WHERE timestamp >= ? ORDER BY id ASC`,
-    [new Date(startTime).toISOString()]
+    `SELECT timestamp, promptTokens, completionTokens FROM usageHistory WHERE timestamp >= ?${ownerUsername ? " AND apiKey IN (SELECT key FROM apiKeys WHERE ownerUsername = ?)" : ""} ORDER BY id ASC`,
+    ownerUsername ? [new Date(startTime).toISOString(), ownerUsername] : [new Date(startTime).toISOString()]
   );
 
   let totalTokensIn = 0;
@@ -947,7 +1085,15 @@ export async function getCacheStats(period = "7d", ownerUsername = null) {
         entry.requests += 1;
         byProviderMap.set(provider, entry);
       }
-      const byProvider = [...byProviderMap.values()].map((entry) => ({ ...entry, hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0 }));
+      const providerNames = {
+        claude: "Claude (Anthropic)", glm: "Z.ai (GLM)", codex: "ChatGPT (OpenAI Codex)", gemini: "Google Gemini",
+        opencode: "OpenCode", ollama: "Ollama", "cloudflare-ai": "Cloudflare AI", github: "GitHub Models", nvidia: "NVIDIA NIM", jev: "Jev API",
+      };
+      const byProvider = [...byProviderMap.values()].map((entry) => ({
+        ...entry,
+        name: providerNames[entry.provider] || entry.provider,
+        hitRate: entry.promptTokens ? Number(((entry.cachedTokens / entry.promptTokens) * 100).toFixed(1)) : 0,
+      }));
       return {
         period,
         summary: { totalPromptTokens, totalCachedTokens, totalCompletionTokens, overallHitRate: totalPromptTokens ? Number(((totalCachedTokens / totalPromptTokens) * 100).toFixed(1)) : 0, totalRequests: rows.length, cachedRequests: rows.filter((row) => { const t = parseJson(row.tokens, {}) || {}; return Number(t.cached_tokens || t.cache_read_input_tokens || 0) > 0; }).length, estimatedSavingsUsd: Number(((totalCachedTokens / 1000000) * 2.7).toFixed(2)) },
@@ -1242,9 +1388,9 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
     const { getProviderConnections } = await import("./connectionsRepo.js");
     const allConnections = await getProviderConnections();
     const connections = ownerUsername
-      ? allConnections.filter((connection) => connection.ownerUsername === ownerUsername)
+      ? await getProviderConnections({ ownerUsername })
       : allConnections;
-    const ownConnectionIds = new Set(connections.map((connection) => connection.id));
+    const ownConnectionIds = new Set((ownerUsername ? connections.filter((connection) => connection.ownerUsername === ownerUsername) : connections).map((connection) => connection.id));
 
     const db = await getAdapter();
     const accountUsage = {};
@@ -1253,7 +1399,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const bucketMs = period === "today" ? (Date.now() - new Date().setHours(0, 0, 0, 0)) : (24 * 3600000);
       const since = new Date(Date.now() - bucketMs).toISOString();
       const rows = db.all(
-        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)" : ""}`,
+        `SELECT connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IS NOT NULL${ownerUsername ? " AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)" : ""}`,
         ownerUsername ? [since, ownerUsername] : [since]
       );
       for (const r of rows) {
@@ -1275,7 +1421,7 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const days = period === "30d" ? 30 : period === "60d" ? 60 : 7;
       const since = new Date(Date.now() - days * 86400000).toISOString();
       const rows = db.all(
-        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ?)`,
+        `SELECT timestamp, connectionId, promptTokens, completionTokens, tokens, cost FROM usageHistory WHERE timestamp >= ? AND connectionId IN (SELECT id FROM providerConnections WHERE ownerUsername = ? OR isShared = 1)`,
         [since, ownerUsername]
       );
       for (const r of rows) {
@@ -1347,7 +1493,8 @@ export async function getCockpitData(period = "7d", ownerUsername = null) {
       const { getSessionCacheSnapshot, hydrateSessionCacheFromDb } = await import("@/lib/jev/sessionCache.js");
       await hydrateSessionCacheFromDb().catch(() => {});
       const list = getSessionCacheSnapshot({ includeTurns: true })
-        .map(({ cacheId, state, models, providers, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+        .map(({ cacheId, state, models, providers, connectionId, cachedTokens, promptTokens, requests, cacheActive, lastActive, createdAt, turns }) => ({
+          connectionId,
           cacheId,
           state,
           models,

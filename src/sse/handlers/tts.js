@@ -1,8 +1,9 @@
 import {
-  extractApiKey, isValidApiKey,
+  isValidApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/localDb";
+import { getTenantRequestContext } from "../services/tenantContext.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleTtsCore } from "open-sse/handlers/ttsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -34,18 +35,19 @@ export async function handleTts(request) {
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
   const settings = await getSettings();
+  const { apiKey, ownerUsername, tenantScoped } = await getTenantRequestContext(request);
   if (settings.requireApiKey) {
-    const apiKey = extractApiKey(request);
     if (!apiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    const valid = await isValidApiKey(apiKey);
+    const valid = !!apiKeyDetails || await isValidApiKey(apiKey);
     if (!valid) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
   }
+  if (tenantScoped && !ownerUsername) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "API key must be assigned to a user");
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!body.input) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
 
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
-  const comboModels = await getComboModels(modelStr);
+  const comboModels = await getComboModels(modelStr, ownerUsername);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -55,7 +57,7 @@ export async function handleTts(request) {
     return handleComboChat({
       body,
       models: peakModels,
-      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language, style),
+      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language, style, ownerUsername, tenantScoped),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -63,11 +65,11 @@ export async function handleTts(request) {
     });
   }
 
-  return handleSingleModelTts(body, modelStr, responseFormat, language, style);
+  return handleSingleModelTts(body, modelStr, responseFormat, language, style, ownerUsername, tenantScoped);
 }
 
-async function handleSingleModelTts(body, modelStr, responseFormat, language, style) {
-  const modelInfo = await getModelInfo(modelStr);
+async function handleSingleModelTts(body, modelStr, responseFormat, language, style, ownerUsername = null, tenantScoped = false) {
+  const modelInfo = await getModelInfo(modelStr, { ownerUsername });
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
   const { provider, model } = modelInfo;
@@ -86,7 +88,9 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = tenantScoped
+      ? await getProviderCredentials(provider, excludeConnectionIds, model, { ownerUsername, tenantScoped: true })
+      : await getProviderCredentials(provider, excludeConnectionIds, model);
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

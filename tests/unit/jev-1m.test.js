@@ -29,14 +29,19 @@ describe("jev-1m alias registry", () => {
 
   it("v1/models advertises jev-1m statically like jev", () => {
     const src = readFileSync("src/app/api/v1/models/route.js", "utf8");
-    expect(src.includes('id: "jev-1m"')).toBe(true);
-    expect(src.includes('id: "nineRouter/jev-1m"')).toBe(true);
+    expect(src.includes('["jev-1m", 1000000]')).toBe(true);
+    expect(src.includes('["nineRouter/jev-1m", 1000000]')).toBe(true);
+  });
+
+  it("does not hide virtual Jev aliases when an upstream provider is health-disabled", () => {
+    const src = readFileSync("src/app/api/v1/models/route.js", "utf8");
+    expect(src).toContain('model.owned_by !== "9router" && permanentlyBlocked.has(model.id)');
   });
 
   it("chat.js narrows the pool for jev-1m (big-context filter)", () => {
     const src = readFileSync("src/sse/handlers/chat.js", "utf8");
     expect(src.includes("JEV1M_MODEL_ALIASES.has(modelStr)")).toBe(true);
     expect(src.includes("bigContext: isJev1m")).toBe(true);
-    expect(src.includes("jev1mMinContext")).toBe(true);
+    expect(src.includes("fitsJevContext(caps, estimatedTokens, body)")).toBe(true);
   });
 });

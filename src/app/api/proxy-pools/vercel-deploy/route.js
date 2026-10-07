@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { createProxyPool } from "@/models";
 
 const VERCEL_API = "https://api.vercel.com";
@@ -58,6 +60,7 @@ async function pollDeployment(deploymentId, token, maxMs = 120000) {
 // POST /api/proxy-pools/vercel-deploy
 export async function POST(request) {
   try {
+    const owner = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     const body = await request.json();
     const vercelToken = body.vercelToken;
     const projectName = body.projectName?.trim() || `relay-${Date.now().toString(36)}`;
@@ -126,6 +129,7 @@ export async function POST(request) {
 
     // Create proxy pool entry with type vercel
     const proxyPool = await createProxyPool({
+      ownerUsername: owner?.username || null,
       name: projectName,
       proxyUrl: deployUrl,
       type: "vercel",

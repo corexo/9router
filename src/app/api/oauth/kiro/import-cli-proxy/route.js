@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 import { normalizeKiroExternalIdpAuth } from "@/lib/oauth/kiroExternalIdp";
 
 /**
@@ -12,7 +12,7 @@ export async function POST(request) {
     const rawAuth = body?.cliProxyAuth ?? body?.auth ?? body?.json ?? body;
     const tokenData = normalizeKiroExternalIdpAuth(rawAuth);
 
-    const connection = await createProviderConnection({
+    const connection = await createOwnedProviderConnection({
       provider: "kiro",
       authType: "oauth",
       accessToken: tokenData.accessToken,

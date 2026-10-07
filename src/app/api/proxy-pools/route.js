@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { createProxyPool, getProviderConnections, getProxyPools } from "@/models";
 
 function toBoolean(value) {
@@ -8,6 +10,7 @@ function toBoolean(value) {
 }
 
 const VALID_PROXY_TYPES = ["http", "vercel", "cloudflare", "deno"];
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 function normalizeProxyPoolInput(body = {}) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
@@ -47,8 +50,9 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const isActive = toBoolean(searchParams.get("isActive"));
     const includeUsage = searchParams.get("includeUsage") === "true";
+    const caller = await getClaims();
 
-    const filter = {};
+    const filter = caller?.username ? { ownerUsername: caller.username } : {};
     if (isActive !== undefined) {
       filter.isActive = isActive;
     }
@@ -59,8 +63,8 @@ export async function GET(request) {
       return NextResponse.json({ proxyPools });
     }
 
-    const connections = await getProviderConnections();
-    const usageMap = buildUsageMap(connections);
+    const connections = await getProviderConnections(caller?.username ? { ownerUsername: caller.username, ownerOnly: true } : {});
+    const usageMap = buildUsageMap(caller?.username ? connections.filter((connection) => connection.ownerUsername === caller.username) : connections);
 
     const enrichedProxyPools = proxyPools.map((pool) => ({
       ...pool,
@@ -78,13 +82,14 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
+    const caller = await getClaims();
     const normalized = normalizeProxyPoolInput(body);
 
     if (normalized.error) {
       return NextResponse.json({ error: normalized.error }, { status: 400 });
     }
 
-    const proxyPool = await createProxyPool(normalized);
+    const proxyPool = await createProxyPool({ ...normalized, ownerUsername: caller?.username || null });
     return NextResponse.json({ proxyPool }, { status: 201 });
   } catch (error) {
     console.log("Error creating proxy pool:", error);

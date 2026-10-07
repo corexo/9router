@@ -52,8 +52,8 @@ export async function GET(request) {
     if (endDate) filter.endDate = endDate;
     
     const claims = await getClaims();
-    if (claims?.role === "moderator") {
-      const ownConnections = await getProviderConnections({ ownerUsername: claims.username });
+    if (claims?.username) {
+      const ownConnections = await getProviderConnections({ ownerUsername: claims.username, ownerOnly: true });
       filter.connectionIds = ownConnections.map((c) => c.id);
     }
 

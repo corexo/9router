@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 
 /**
  * POST /api/oauth/xiaomi-mimo/api-key
@@ -92,7 +92,7 @@ export async function POST(request) {
       });
     }
 
-    const connection = await createProviderConnection({
+    const connection = await createOwnedProviderConnection({
       provider: "xiaomi-mimo",
       authType: "api_key",
       accessToken: key,
