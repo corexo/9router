@@ -396,8 +396,9 @@ export async function buildModelsList(kindFilter, options = {}) {
       // Config-driven live catalog override (e.g. Kiro returns dynamic
       // -thinking/-agentic variants per account). On failure, fall back to
       // whatever rawModelIds already holds.
+      const canPersistConnection = !ownerUsername || conn.ownerUsername === ownerUsername;
       const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-      if (liveResolver && !hasExplicitEnabledModels) {
+      if (liveResolver && !hasExplicitEnabledModels && canPersistConnection) {
         try {
           const live = await liveResolver(conn);
           if (live?.models?.length) {
@@ -530,6 +531,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         providerId === "codex"
         && !hasExplicitEnabledModels
         && (options.includeDiscovered || []).includes("codex")
+        && canPersistConnection
       ) {
         try {
           const live = await resolveCodexLiveModels(

@@ -69,7 +69,7 @@ export async function PUT(request, { params }) {
 
     const updated = await updateProviderNode(id, updates);
 
-    const connections = await getProviderConnections({ provider: id });
+    const connections = await getProviderConnections({ provider: id, ownerUsername: node.ownerUsername, ownerOnly: true });
     await Promise.all(connections.map((connection) => (
       updateProviderConnection(connection.id, {
         providerSpecificData: {
@@ -103,7 +103,7 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    await deleteProviderConnectionsByProvider(id);
+    await deleteProviderConnectionsByProvider(id, node.ownerUsername ?? null);
     await deleteProviderNode(id);
 
     return NextResponse.json({ success: true });

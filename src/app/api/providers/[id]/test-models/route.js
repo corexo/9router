@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getProviderConnectionById } from "@/lib/localDb";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { getProviderConnectionById, getProviderConnectionForUser } from "@/lib/localDb";
 import { getProviderModels, PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
@@ -13,7 +15,11 @@ import { pingModelByKind } from "@/app/api/models/test/ping";
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
-    const connection = await getProviderConnectionById(id);
+    const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
+    const connection = claims?.username
+      ? await getProviderConnectionForUser(id, claims.username, { ownerOnly: true })
+      : await getProviderConnectionById(id);
+    if (!connection) return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     if (!connection) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }

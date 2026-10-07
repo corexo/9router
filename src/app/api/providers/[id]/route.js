@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getProviderConnectionById,
+  getProviderConnectionForUser,
   getProxyPoolById,
   updateProviderConnection,
   deleteProviderConnection,
@@ -37,7 +38,7 @@ function normalizeProxyConfig(body = {}) {
   };
 }
 
-async function normalizeProxyPoolUpdate(proxyPoolIdInput) {
+async function normalizeProxyPoolUpdate(proxyPoolIdInput, ownerUsername = null) {
   if (proxyPoolIdInput === undefined) {
     return { hasProxyPoolField: false, proxyPoolId: null };
   }
@@ -51,7 +52,7 @@ async function normalizeProxyPoolUpdate(proxyPoolIdInput) {
     return { hasProxyPoolField: true, proxyPoolId: null };
   }
 
-  const proxyPool = await getProxyPoolById(proxyPoolId);
+  const proxyPool = await getProxyPoolById(proxyPoolId, ownerUsername);
   if (!proxyPool) {
     return { hasProxyPoolField: true, error: "Proxy pool not found" };
   }
@@ -63,11 +64,14 @@ function shouldMergeProviderSpecificData(existing, incoming, hasLegacyProxy, has
   return existing !== undefined || incoming !== undefined || hasLegacyProxy || hasProxyPoolField;
 }
 
-// GET /api/providers/[id] - Get single connection
+// GET /api/providers/[id] - Get a visible connection
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
-    const connection = await getProviderConnectionById(id);
+    const caller = await getClaims();
+    const connection = caller?.username
+      ? await getProviderConnectionForUser(id, caller.username)
+      : await getProviderConnectionById(id);
 
     if (!connection) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
@@ -79,6 +83,7 @@ export async function GET(request, { params }) {
     delete result.accessToken;
     delete result.refreshToken;
     delete result.idToken;
+    if (caller?.username && connection.ownerUsername !== caller.username) delete result.providerSpecificData;
 
     return NextResponse.json({ connection: result });
   } catch (error) {
@@ -111,6 +116,7 @@ export async function PUT(request, { params }) {
       throttlePercent,
       weight,
       dynamicBalanceEnabled,
+      isShared,
     } = body;
 
     if (!existing) {
@@ -122,7 +128,7 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });
     }
 
-    const proxyPoolResult = await normalizeProxyPoolUpdate(body.proxyPoolId);
+    const proxyPoolResult = await normalizeProxyPoolUpdate(body.proxyPoolId, caller?.username || null);
     if (proxyPoolResult.error) {
       return NextResponse.json({ error: proxyPoolResult.error }, { status: 400 });
     }
@@ -148,6 +154,7 @@ export async function PUT(request, { params }) {
     if (dynamicBalanceEnabled !== undefined) {
       updateData.dynamicBalanceEnabled = Boolean(dynamicBalanceEnabled);
     }
+    if (isShared !== undefined) updateData.isShared = isShared === true;
 
     if (
       shouldMergeProviderSpecificData(

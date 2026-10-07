@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import {
   deleteProxyPool,
   getProviderConnections,
   getProxyPoolById,
   updateProxyPool,
 } from "@/models";
+
+async function getClaims() { return verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null); }
 
 function normalizeProxyPoolUpdate(body = {}) {
   const updates = {};
@@ -49,11 +53,12 @@ function countBoundConnections(connections = [], proxyPoolId) {
   return connections.filter((connection) => connection?.providerSpecificData?.proxyPoolId === proxyPoolId).length;
 }
 
-// GET /api/proxy-pools/[id] - Get proxy pool
+// GET /api/proxy-pools/[id] - Get own proxy pool
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
-    const proxyPool = await getProxyPoolById(id);
+    const caller = await getClaims();
+    const proxyPool = caller?.username ? await getProxyPoolById(id, caller.username) : await getProxyPoolById(id);
 
     if (!proxyPool) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
@@ -70,7 +75,8 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const existing = await getProxyPoolById(id);
+    const caller = await getClaims();
+    const existing = caller?.username ? await getProxyPoolById(id, caller.username) : await getProxyPoolById(id);
 
     if (!existing) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
@@ -95,14 +101,16 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
-    const existing = await getProxyPoolById(id);
+    const caller = await getClaims();
+    const existing = caller?.username ? await getProxyPoolById(id, caller.username) : await getProxyPoolById(id);
 
     if (!existing) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
     }
 
-    const connections = await getProviderConnections();
-    const boundConnectionCount = countBoundConnections(connections, id);
+    const connections = await getProviderConnections(caller?.username ? { ownerUsername: caller.username, ownerOnly: true } : {});
+    const ownedConnections = caller?.username ? connections.filter((connection) => connection.ownerUsername === caller.username) : connections;
+    const boundConnectionCount = countBoundConnections(ownedConnections, id);
 
     if (boundConnectionCount > 0) {
       return NextResponse.json(

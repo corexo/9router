@@ -23,11 +23,11 @@ describe("Cockpit tenant scoping", () => {
     expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", "Ugur");
   });
 
-  it("keeps admin global scope", async () => {
+  it("scopes the admin Cockpit to the admin's own tenant", async () => {
     mocks.cookies.mockResolvedValue({ get: () => ({ value: "session" }) });
     mocks.verifyDashboardAuthToken.mockResolvedValue({ username: "Oguz", role: "admin" });
     mocks.getCockpitData.mockResolvedValue({ accounts: [] });
     await GET(new Request("http://localhost/api/dashboard/cockpit?period=7d"));
-    expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", null);
+    expect(mocks.getCockpitData).toHaveBeenCalledWith("7d", "Oguz");
   });
 });

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { createProxyPool } from "@/models";
 
 const DENO_V2_API = "https://api.deno.com/v2";
@@ -46,6 +48,7 @@ const DENO_RELAY_CODE = `Deno.serve(async (request) => {
 
 export async function POST(request) {
   try {
+    const owner = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     const body = await request.json();
     const denoToken = body.denoToken?.trim();
     const orgDomain = body.orgDomain?.trim();
@@ -159,6 +162,7 @@ export async function POST(request) {
     console.log("Deno deployUrl:", deployUrl);
 
     const proxyPool = await createProxyPool({
+      ownerUsername: owner?.username || null,
       name: projectName,
       proxyUrl: deployUrl,
       type: "deno",

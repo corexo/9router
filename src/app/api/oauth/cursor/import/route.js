@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { CursorService } from "@/lib/oauth/services/cursor";
-import { createProviderConnection } from "@/models";
+import { createOwnedProviderConnection } from "@/lib/tenant/providerOwnership";
 
 /**
  * POST /api/oauth/cursor/import
@@ -40,7 +40,7 @@ export async function POST(request) {
     const userInfo = cursorService.extractUserInfo(tokenData.accessToken);
 
     // Save to database
-    const connection = await createProviderConnection({
+    const connection = await createOwnedProviderConnection({
       provider: "cursor",
       authType: "oauth",
       accessToken: tokenData.accessToken,

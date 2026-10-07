@@ -3,6 +3,7 @@ import {
   getProviderConnections,
   updateProviderConnection,
 } from "@/lib/localDb";
+import { getRequestUsername } from "@/lib/auth/requestUser";
 
 const MODEL_LOCK_PREFIX = "modelLock_";
 
@@ -21,7 +22,8 @@ function getActiveModelLocks(connection) {
 
 export async function GET() {
   try {
-    const connections = await getProviderConnections();
+    const username = await getRequestUsername();
+    const connections = await getProviderConnections(username ? { ownerUsername: username } : {});
     const models = [];
 
     for (const connection of connections) {
@@ -66,12 +68,13 @@ export async function GET() {
 export async function POST(request) {
   try {
     const { action, provider, model } = await request.json();
+    const username = await getRequestUsername();
 
     if (action !== "clearCooldown" || !provider || !model) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const connections = await getProviderConnections({ provider });
+    const connections = await getProviderConnections({ provider, ...(username ? { ownerUsername: username, ownerOnly: true } : {}) });
     const lockKey = `${MODEL_LOCK_PREFIX}${model}`;
 
     await Promise.all(

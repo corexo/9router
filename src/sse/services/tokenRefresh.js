@@ -222,6 +222,8 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
  * @returns {Promise<object>} updated credentials object
  */
 export async function checkAndRefreshToken(provider, credentials, options = {}) {
+  // Shared consumers may use the owner's current credential but cannot rotate/persist it.
+  if (credentials?.isSharedAccount) return { ...credentials };
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
     creds.connectionId = creds.id;
