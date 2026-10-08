@@ -167,6 +167,7 @@ export default function CacheSessionsClient() {
     const q = searchQuery.toLowerCase();
     return base.filter((s) => {
       if (s.cacheId?.toLowerCase().includes(q)) return true;
+      if (s.piProjectPath?.toLowerCase().includes(q)) return true;
       if (s.provider?.toLowerCase().includes(q)) return true;
       if (s.models?.some((m) => m?.toLowerCase().includes(q))) return true;
       return false;
@@ -419,6 +420,7 @@ export default function CacheSessionsClient() {
             <thead>
               <tr className="border-b border-border bg-surface-2/50 text-xs font-semibold text-text-muted uppercase tracking-wider">
                 <th className="p-4">Cache-ID</th>
+                <th className="p-4">Projekt / Pfad</th>
                 <th className="p-4">Status &amp; TTL</th>
                 <th className="p-4">Provider</th>
                 <th className="p-4">Modell(e)</th>
@@ -459,6 +461,21 @@ export default function CacheSessionsClient() {
                             </span>
                           </button>
                         </div>
+                      </td>
+                      <td className="p-4">
+                        {session.piProjectPath ? (
+                          <div className="flex flex-col gap-0.5 max-w-[220px]">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-text-main truncate" title={session.piProjectPath}>
+                              <span className="material-symbols-outlined text-[14px] text-brand-500">folder</span>
+                              <span className="truncate">{session.piProjectPath.split("/").filter(Boolean).pop() || session.piProjectPath}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-text-muted truncate" title={session.piProjectPath}>
+                              {session.piProjectPath}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-text-muted text-xs">—</span>
+                        )}
                       </td>
                       <td className="p-4">
                         <div className="flex flex-col gap-1">

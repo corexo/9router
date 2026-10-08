@@ -92,11 +92,17 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
 
-  // The Pi path is only for the Cockpit: remove it before logging, routing,
-  // translation or forwarding the request to any upstream provider.
-  const piProjectPath = body?.pi_project_path;
-  if (body && typeof body === "object") delete body.pi_project_path;
-  if (clientRawRequest?.body && typeof clientRawRequest.body === "object") delete clientRawRequest.body.pi_project_path;
+  // Support project path via body (pi_project_path, project_path) or HTTP header (x-pi-project-path)
+  const headerProjectPath = request?.headers?.get("x-pi-project-path") || request?.headers?.get("x-project-path");
+  const piProjectPath = body?.pi_project_path || body?.project_path || headerProjectPath || null;
+  if (body && typeof body === "object") {
+    delete body.pi_project_path;
+    delete body.project_path;
+  }
+  if (clientRawRequest?.body && typeof clientRawRequest.body === "object") {
+    delete clientRawRequest.body.pi_project_path;
+    delete clientRawRequest.body.project_path;
+  }
 
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
@@ -711,6 +717,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           clearSessionProviderFailure(sessKey, provider);
           if (credentials.connectionId) {
             setSessionConnection(sessKey, credentials.connectionId);
+          }
+          // Ensure session probePrefix has the concrete downstream provider/model (resolving combos)
+          const singleProbeMsgs = Array.isArray(body?.messages)
+            ? body.messages.filter((m) => m?.role === "system" || m?.role === "developer").slice(0, 2)
+              .concat(body.messages.filter((m) => m?.role !== "system" && m?.role !== "developer").slice(0, 2))
+              .map((m) => ({
+                role: m.role,
+                content: typeof m.content === "string" ? m.content : (Array.isArray(m.content) ? m.content.filter(p => p?.type === "text") : ""),
+              }))
+            : null;
+          if (singleProbeMsgs && singleProbeMsgs.length > 0) {
+            touchSessionCache(sessKey, {
+              model: `${provider}/${model}`,
+              provider,
+              probePrefix: { messages: singleProbeMsgs, model: `${provider}/${model}`, provider },
+            });
           }
         }
       }

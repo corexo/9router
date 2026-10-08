@@ -43,7 +43,7 @@ export async function GET(request) {
         providers: providers || [],
         provider: providers?.[0] || null,
         connectionId: connectionId || null,
-        ...(showPath ? { piProjectPath: piProjectPath || null } : {}),
+        piProjectPath: piProjectPath || null,
         cacheActive,
         cachedTokens,
         promptTokens,
