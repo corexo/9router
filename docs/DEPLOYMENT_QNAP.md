@@ -1,106 +1,45 @@
-# PiRouter QNAP Deployment & Rollback Guide
+# PiRouter QNAP Blue/Green Deployment
 
-Dokumentation für den produktiven Betrieb von PiRouter auf dem QNAP NAS (`192.168.10.40:9311`).
+PiRouter läuft auf `192.168.10.40:9311`. `scripts/deploy-qnap.sh` nutzt Blue/Green über einen stabilen Nginx-Ingress; `scripts/deploy-qnap-legacy.sh` bleibt als ausdrücklich unterbrechender Notfallpfad erhalten.
 
-## 1. Übersicht & Zielsetzung
+## Erstmaliger Bootstrap
 
-Da AI-Agenten (z. B. Pi) rund um die Uhr auf den PiRouter als Gateway angewiesen sind, darf ein Deployment niemals zu einem unbemerkten oder anhaltenden Ausfall führen.
-
-Das Skript [`scripts/deploy-qnap.sh`](../scripts/deploy-qnap.sh) automatisiert den gesamten Lifecycle:
-- **Lokaler Pre-Flight & Build**: Baut das Docker-Image lokal mit Git-Commit-Tagging.
-- **Lokaler Smoke-Test**: Startet einen isolierten Testcontainer lokal und wartet auf `health: 200`. Bricht sofort ab, falls der Build defekt ist (Live-System bleibt unangetastet).
-- **Automatisches Remote DB-Backup**: Sichert die SQLite-Datenbank (`data.sqlite`) auf dem NAS vor dem Umschalten.
-- **Automatischer Rollback**: Schlägt die Health-Prüfung nach dem Start fehl, schaltet das Skript automatisch innerhalb von Sekunden auf das vorherige funktionierende Image zurück.
-- **End-to-End Chat-Verifikation**: Führt nach erfolgreichem Health-Check einen Live-Ping via `cx/gpt-6-sol` aus.
-
----
-
-## 2. Befehlsreferenz
-
-Alle Befehle werden aus dem Repository-Root ausgeführt:
+Der aktuelle Container bindet `9311` direkt. Beim einmaligen Wechsel zum Ingress muss diese Listener-Belegung übergeben werden; der Nutzer hat eine kurze einmalige Unterbrechung dafür genehmigt. Vorher baut/testet das Script das neue Image, prüft den Green-Container auf einem loopback-only Port und führt einen SQLite-Online-Backup zur externen Platte aus.
 
 ```bash
-# Status und Health des laufenden QNAP-Containers abfragen
 ./scripts/deploy-qnap.sh --status
+./scripts/deploy-qnap.sh --bootstrap
+```
 
-# Neues Release bauen, prüfen, sichern und deployen
-./scripts/deploy-qnap.sh
+Bootstrap-Reihenfolge:
+1. Lokaler Docker-Build + interner `/api/health` Smoke-Test.
+2. Image-Transfer zur QNAP.
+3. Online-Backup via `better-sqlite3.backup()` nach `/share/external/DEV3304_1/9router-backups` (kein Dateikopieren der aktiven WAL-DB).
+4. Green startet intern auf loopback-Port `9322`; Blue bleibt live auf `9311`.
+5. Host-network Nginx-Ingress wird zuerst nur am Docker-Bridge-Gateway auf Port `9312` geprüft; bestehender HTTPS-Nginx wird auf den Canary-Ingress umgeschaltet.
+6. Einmaliger kurzer Listener-Handoff von direktem Blue `:9311` auf den Ingress `:9311`; Health-Prüfung, danach externe Nginx-Upstream auf den stabilen Ingress.
+7. Zustand in `data-home/ingress/state.env`; alter Image-Tag bleibt als Rollback-Basis erhalten.
 
-# Sofortiges Rollback auf das vorherige Image
+## Zukünftige Deployments
+
+```bash
+./scripts/deploy-qnap.sh --status
+./scripts/deploy-qnap.sh --skip-e2e
 ./scripts/deploy-qnap.sh --rollback
 ```
 
----
+- Blue/Green App-Slots: `9router-qnap-blue` (`127.0.0.1:9321`) und `9router-qnap-green` (`127.0.0.1:9322`). Nie direkt öffentlich gebunden.
+- Der stabile Ingress hält `:9311`; der bestehende HTTPS-Proxy nutzt das Bridge-Gateway auf `:9312`.
+- Candidate wird gebaut, gesmokt, online gesichert, gestartet und intern health-geprüft, bevor Nginx den Upstream atomar wechselt.
+- Nginx reload ist graceful; alte Worker bedienen bestehende Streams weiter. Altes App-Slot wird erst nach dem Drain gestoppt. Bei Drain-Timeout bleibt es erhalten; ein weiterer Deploy überschreibt keinen noch laufenden Slot.
+- Rollback startet bei Bedarf die vorherige Version im freien Slot und schwenkt den Ingress zurück; die DB wird für normale Rollbacks nicht restauriert.
+- Es laufen während kurzer Blue/Green-Überlappung beide Scheduler-Prozesse. Der Deploy minimiert dieses Fenster; Doppel-Probes bleiben ein bekanntes Restrisiko, bis Scheduler-Leases unabhängig von Web-Prozessen existieren.
 
-## 3. Architektur & Container-Spezifikation (QNAP)
+## SQLite / Betriebssicherheit
 
-| Parameter | Wert |
-| :--- | :--- |
-| **Host** | `qnap` (`192.168.10.40`) |
-| **Container-Name** | `9router-qnap-test` |
-| **Port-Mapping** | `9311:20128` (Bridge) |
-| **Data Mount** | `/share/CE_CACHEDEV1_DATA/Container/9router-test/data-home:/app/data` |
-| **Backup-Verzeichnis** | `/share/CE_CACHEDEV1_DATA/Container/9router-test/backups` |
-| **State-Datei** | `/share/CE_CACHEDEV1_DATA/Container/9router-test/current-deployment.env` |
-| **Restart-Policy** | `always` |
-| **Docker-Binary (QNAP)** | `/share/CE_CACHEDEV1_DATA/.qpkg/container-station/bin/docker` |
-
----
-
-## 4. Ablauf eines Deployments (`do_deploy`)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as Entwickler
-    participant Script as deploy-qnap.sh
-    participant LocalDocker as Lokaler Docker
-    participant QNAP as QNAP NAS (Container Station)
-    participant PiRouter as PiRouter Container
-
-    Dev->>Script: ./scripts/deploy-qnap.sh
-    Script->>QNAP: Aktuell laufendes Image auslesen (für Rollback-State)
-    Script->>LocalDocker: docker build -t 9router-qnap-test:<git-sha>
-    Script->>LocalDocker: Lokaler Smoke-Test (Port 20999 -> /api/health)
-    alt Smoke-Test fehlschlägt
-        Script-->>Dev: ABBRUCH (Live-Container bleibt unberührt)
-    end
-    Script->>QNAP: docker save | gzip | ssh -> docker load
-    Script->>QNAP: Backup: data.sqlite -> data.sqlite.backup-<timestamp>
-    Script->>QNAP: Container stoppen & neu starten mit neuem Image
-    Script->>PiRouter: Health-Check: http://192.168.10.40:9311/api/health
-    alt Health-Check fehlschlägt
-        Script->>Script: do_rollback (automatischer Rollback auf Vorversion)
-        Script-->>Dev: FEHLER: Automatischer Rollback durchgeführt!
-    else Health-Check OK
-        Script->>PiRouter: Live-Check: POST /v1/chat/completions (cx/gpt-6-sol)
-        Script->>QNAP: current-deployment.env aktualisieren
-        Script-->>Dev: SUCCESS: Deployment live und verifiziert
-    end
-```
-
----
-
-## 5. Manuelles Rollback & Notfall-Wiederherstellung
-
-Falls ein Problem erst im laufenden Betrieb auffällt:
-```bash
-./scripts/deploy-qnap.sh --rollback
-```
-
-Das Skript liest die `current-deployment.env` auf der QNAP aus und startet unverzüglich das in `PREVIOUS_IMAGE` hinterlegte Image. Sollte die State-Datei nicht existieren, greift das Skript automatisch auf das bekannte Notfall-Image `9router-qnap-test:rescue-1348de3c` zurück.
-
-### Manuelle Notfall-Befehle via SSH (falls das Skript nicht genutzt werden kann):
-```bash
-ssh qnap
-D=/share/CE_CACHEDEV1_DATA/.qpkg/container-station/bin/docker
-
-# 1. Container stoppen und entfernen
-$D stop 9router-qnap-test && $D rm 9router-qnap-test
-
-# 2. Auf stabiles Rescue-Image starten
-$D run -d --name 9router-qnap-test --restart always \
-  -p 9311:20128 \
-  -v /share/CE_CACHEDEV1_DATA/Container/9router-test/data-home:/app/data \
-  9router-qnap-test:1064a675
-```
+- DB bleibt am vorhandenen Bind-Mount `/share/CE_CACHEDEV1_DATA/Container/9router-test/data-home:/app/data`.
+- SQLite WAL + `busy_timeout=5000`; Schemaänderungen müssen additiv und Blue/Green-rückwärtskompatibel sein.
+- QNAP Docker-CLI-Pfad ist `/share/CE_CACHEDEV1_DATA/.qpkg/container-station/bin/docker` (nicht im SSH-PATH).
+- Script nutzt kein `docker system prune`, löscht keine alten Backups/Bilder automatisch.
+- Vor Bootstrap sicherstellen, dass QNAP Platz für Green-Image, laufende DB und Nginx hat. Externes Backup-Volume hat Vorrang.
+- `--legacy` führt das alte Stop-and-recreate Deployment explizit aus und verursacht Downtime.
