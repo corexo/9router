@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPaidTrafficData, hydratePaidTraffic } from "@/lib/jev/paidTrafficBalancer.js";
 import { getUsageStats } from "@/lib/db/repos/usageRepo.js";
-import { getProviderConnections } from "@/lib/localDb";
+import { getSettings, getProviderConnections } from "@/lib/localDb";
 import { getRequestUsername } from "@/lib/auth/requestUser";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const username = await getRequestUsername();
+    const settings = await getSettings();
+    const accountBalanceEnabled = settings.accountBalanceEnabled === true;
+    // Read the stored ledger even while disabled; do not poll providers or trigger Jev allocations.
     await hydratePaidTraffic();
     const [traffic, usage, visibleConnections] = await Promise.all([
       Promise.resolve(getPaidTrafficData()),
@@ -32,7 +35,7 @@ export async function GET() {
       tokens: (account.promptTokens || 0) + (account.completionTokens || 0),
       cost: account.cost || 0,
     })).filter((account) => account.cost > 0);
-    return NextResponse.json({ ...scopedTraffic, usage: accounts });
+    return NextResponse.json({ accountBalanceEnabled, ...scopedTraffic, usage: accounts });
   } catch (error) {
     console.error("[API] Failed to get paid traffic data:", error);
     return NextResponse.json({ error: "Failed to fetch paid traffic data" }, { status: 500 });

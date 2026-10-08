@@ -39,9 +39,10 @@ export default function CompactQuotaTracker() {
   const [resettingId, setResettingId] = useState(null);
   const [resetConfirmState, setResetConfirmState] = useState(null); // { account, resetCreditCount }
   const [resetFeedback, setResetFeedback] = useState(null); // { type: 'success'|'error', text: string }
+  const [accountBalanceEnabled, setAccountBalanceEnabled] = useState(false);
 
   // Fetch connections and quotas
-  const fetchAllQuotas = useCallback(async (force = false) => {
+  const fetchAllQuotas = useCallback(async (force = false, allowLive = accountBalanceEnabled) => {
     if (force) setRefreshing(true);
     try {
       const res = await fetch("/api/providers/client?pageSize=500&sort=priority", {
@@ -54,6 +55,7 @@ export default function CompactQuotaTracker() {
       // Only take active connections or those with potential quota support
       const activeConns = allConns.filter((c) => c.isActive !== false);
       setConnections(activeConns);
+      if (!allowLive) return;
 
       // Fetch usage/quota for each connection in parallel
       const quotaResults = {};
@@ -95,10 +97,11 @@ export default function CompactQuotaTracker() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [accountBalanceEnabled]);
 
   // Refresh a single connection by fetching live quota from the provider
   const refreshSingleAccount = useCallback(async (conn) => {
+    if (!accountBalanceEnabled) return;
     setRefreshingIds((prev) => new Set([...prev, conn.id]));
     try {
       const qr = await fetch(`/api/usage/${conn.id}?force=1`, { cache: "no-store" });
@@ -129,11 +132,11 @@ export default function CompactQuotaTracker() {
         return next;
       });
     }
-  }, []);
+  }, [accountBalanceEnabled]);
 
   // Execute reset for an account (Codex, Claude, GLM)
   const handleExecuteReset = useCallback(async (account) => {
-    if (!account || resettingId) return;
+    if (!accountBalanceEnabled || !account || resettingId) return;
     setResettingId(account.id);
     setResetFeedback(null);
     try {
@@ -162,19 +165,19 @@ export default function CompactQuotaTracker() {
       setResettingId(null);
       setResetConfirmState(null);
     }
-  }, [refreshSingleAccount, resettingId]);
+  }, [accountBalanceEnabled, refreshSingleAccount, resettingId]);
 
   useEffect(() => {
     let ignore = false;
-    const timer = setTimeout(() => {
-      if (!ignore) {
-        fetchAllQuotas(false);
-      }
-    }, 0);
-    return () => {
-      ignore = true;
-      clearTimeout(timer);
-    };
+    fetch("/api/settings", { cache: "no-store" })
+      .then((res) => res.json().catch(() => ({})))
+      .then(async (settings) => {
+        const enabled = settings.accountBalanceEnabled === true;
+        if (!ignore) setAccountBalanceEnabled(enabled);
+        await fetchAllQuotas(false, enabled);
+      })
+      .catch(() => fetchAllQuotas(false, false));
+    return () => { ignore = true; };
   }, [fetchAllQuotas]);
 
   // Transform connections with their quota entries
@@ -262,6 +265,7 @@ export default function CompactQuotaTracker() {
               <Badge variant="outline" size="sm" className="font-mono text-[11px]">
                 {quotaAccounts.length} {quotaAccounts.length === 1 ? "Account" : "Accounts"}
               </Badge>
+              {!accountBalanceEnabled && <Badge variant="outline" size="sm">Deactivated</Badge>}
               {lowQuotaCount > 0 && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
@@ -276,7 +280,9 @@ export default function CompactQuotaTracker() {
               )}
             </div>
             <p className="text-xs text-text-muted">
-              Echtzeit-Überwachung der 5h-Windows, Wochen-Limits und Ratenbegrenzungen mit Countdown-Balken
+              {accountBalanceEnabled
+                ? "Echtzeit-Überwachung der 5h-Windows, Wochen-Limits und Ratenbegrenzungen mit Countdown-Balken"
+                : "Account Balance deaktiviert: gespeicherte Kontingente werden nur angezeigt."}
             </p>
           </div>
         </div>
@@ -349,8 +355,8 @@ export default function CompactQuotaTracker() {
             </button>
           </div>
 
-          {/* Refresh button */}
-          <button
+          {/* Refresh button: active only while Account Balance is enabled */}
+          {accountBalanceEnabled && <button
             onClick={() => fetchAllQuotas(true)}
             disabled={refreshing}
             className="p-1.5 rounded-lg border border-border bg-surface text-text-muted hover:text-text-main transition-colors disabled:opacity-50"
@@ -359,7 +365,7 @@ export default function CompactQuotaTracker() {
             <span className={`material-symbols-outlined text-[16px] ${refreshing ? "animate-spin text-primary" : ""}`}>
               refresh
             </span>
-          </button>
+          </button>}
 
           {/* Link to Full Quota Page */}
           <a
@@ -459,7 +465,7 @@ export default function CompactQuotaTracker() {
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
+                    {accountBalanceEnabled && <button
                       onClick={() => refreshSingleAccount(acc.conn)}
                       disabled={refreshingIds.has(acc.id) || refreshing}
                       className="p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40"
@@ -472,7 +478,7 @@ export default function CompactQuotaTracker() {
                       >
                         refresh
                       </span>
-                    </button>
+                    </button>}
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${
                         acc.isActive ? "bg-emerald-500" : "bg-slate-400"
@@ -526,7 +532,7 @@ export default function CompactQuotaTracker() {
               </div>
 
               {/* Reset Credit Counter & Reset Action Button */}
-              {acc.supportsReset && (
+              {accountBalanceEnabled && acc.supportsReset && (
                 <div className="mt-3 pt-2.5 border-t border-border/50 flex items-center justify-between text-[11px]">
                   <div className="flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-[15px] text-amber-500">bolt</span>
@@ -597,7 +603,7 @@ export default function CompactQuotaTracker() {
                           fallbackText={acc.provider.slice(0, 2).toUpperCase()}
                         />
                         <span className="truncate">{acc.name}</span>
-                        <button
+                        {accountBalanceEnabled && <button
                           onClick={() => refreshSingleAccount(acc.conn)}
                           disabled={refreshingIds.has(acc.id) || refreshing}
                           className="ml-auto p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40 shrink-0"
@@ -610,7 +616,7 @@ export default function CompactQuotaTracker() {
                           >
                             refresh
                           </span>
-                        </button>
+                        </button>}
                       </div>
                     </td>
                     <td className="p-2.5 font-mono text-text-muted uppercase text-[11px]">
@@ -688,7 +694,7 @@ export default function CompactQuotaTracker() {
                       )}
                     </td>
                     <td className="p-2.5 text-center">
-                      {acc.supportsReset ? (
+                      {accountBalanceEnabled && acc.supportsReset ? (
                         <div className="inline-flex items-center justify-center gap-1.5">
                           {acc.resetCreditCount > 0 ? (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">

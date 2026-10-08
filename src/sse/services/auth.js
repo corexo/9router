@@ -44,7 +44,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const currentMutex = selectionMutex;
   let resolveMutex;
   selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
-  await hydratePaidTraffic();
+  const accountBalanceSettings = await getSettings();
+  const accountBalanceEnabled = accountBalanceSettings.accountBalanceEnabled === true;
+  if (accountBalanceEnabled) await hydratePaidTraffic();
 
   try {
     await currentMutex;
@@ -163,14 +165,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (connection) {
       // skip strategy (pinned by session stickiness)
     } else {
-      // 1. Check if dynamic balancing is enabled for SELECTED accounts
-      const balancerAccounts = availableConnections.filter(
-        (c) => c.dynamicBalanceEnabled === true
-      );
+      // 1. Check if dynamic balancing is enabled for SELECTED accounts.
+      // Account Balance System disabled: weights/distribution are retained but inactive.
+      const balancerAccounts = accountBalanceEnabled
+        ? availableConnections.filter(
+            (c) => c.dynamicBalanceEnabled === true
+          )
+        : [];
 
       if (balancerAccounts.length > 0) {
         // Bias distribution to paid models only; Jev is driven by paid usage.
-        const modelIsPaid = model && isPaidModel(`${providerId}/${model}`, () => providerId, getPricingForModelSync);
+        // Account Balance System disabled: quota-weighted distribution is retained but inactive.
+        const modelIsPaid = accountBalanceEnabled && model && isPaidModel(`${providerId}/${model}`, () => providerId, getPricingForModelSync);
         // Only apply Jev distribution to paid models (exclude free models from balanced routing).
         const distribution = modelIsPaid ? getPaidTrafficDistribution(providerId) : null;
         const jevCandidates = balancerAccounts.filter((c) => Number(distribution?.[c.id]) > 0);
@@ -209,7 +215,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           `${provider} | dynamic balancer pick: ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"}) | weight=${connection.weight ?? (100 - (connection.throttlePercent || 0))}`
         );
         }
-      } else if (availableConnections.some((c) => Number(c.throttlePercent || 0) > 0)) {
+      } else if (accountBalanceEnabled && availableConnections.some((c) => Number(c.throttlePercent || 0) > 0)) {
         // 2. Standalone throttling fallback
         const nonStandby = availableConnections.filter(
           (c) => (Number(c.throttlePercent || 0)) < 100

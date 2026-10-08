@@ -14,10 +14,14 @@ const DEFAULT_SETTINGS = {
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
   quotaVisibility: {},
+  // Retains paid-traffic history/configuration while disabling quota-driven account allocation.
+  accountBalanceEnabled: false,
   providerBalancer: {
     enabled: true,
     providers: {},
   },
+  // Retains paid-traffic history/configuration while disabling quota-driven account allocation.
+  accountBalanceEnabled: false,
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},

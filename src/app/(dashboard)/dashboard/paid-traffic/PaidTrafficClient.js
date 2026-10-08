@@ -8,22 +8,29 @@ export default function PaidTrafficClient() {
   const [error, setError] = useState("");
   useEffect(() => {
     let alive = true;
+    let timer = null;
     const load = async () => {
       try {
         const response = await fetch("/api/paid-traffic", { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const json = await response.json();
         if (alive) setData(json);
-      } catch (err) { if (alive) setError(err.message); }
+        return json;
+      } catch (err) {
+        if (alive) setError(err.message);
+        return null;
+      }
     };
-    load();
-    const timer = setInterval(load, 30_000);
-    return () => { alive = false; clearInterval(timer); };
+    load().then((json) => {
+      if (alive && json?.accountBalanceEnabled) timer = setInterval(load, 30_000);
+    });
+    return () => { alive = false; if (timer) clearInterval(timer); };
   }, []);
 
   const usage = data?.usage || [];
   const maxTokens = Math.max(1, ...usage.map((item) => item.tokens));
   return <div className="space-y-4">
+    {data?.accountBalanceEnabled === false && <Card className="border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-600 dark:text-amber-400" role="status">Account Balance ist deaktiviert. Verlauf und Kontingente werden nur angezeigt; keine aktive Verteilung.</Card>}
     {error && <Card className="p-4 text-sm text-red-400">Usage load failed: {error}</Card>}
     <Card className="p-4">
       <h2 className="mb-4 font-semibold text-text-main">Paid usage · 7 days</h2>
