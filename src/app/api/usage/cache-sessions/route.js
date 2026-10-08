@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { getSessionCacheSnapshot } from "@/lib/jev/sessionCache.js";
+import { getSessionCacheSnapshot, hydrateSessionCacheFromDb } from "@/lib/jev/sessionCache.js";
 
 export const dynamic = "force-dynamic";
 
 /** Per-session cache observability snapshot (in-memory registry, newest first). */
 export async function GET(request) {
   try {
+    await hydrateSessionCacheFromDb().catch(() => {});
     const { searchParams } = new URL(request.url);
     const filter = searchParams.get("filter");
     const showPath = searchParams.get("cockpit") === "true";

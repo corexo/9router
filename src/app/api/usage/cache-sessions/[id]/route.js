@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getSessionCacheDetail } from "@/lib/jev/sessionCache.js";
+import { getSessionCacheDetail, hydrateSessionCacheFromDb } from "@/lib/jev/sessionCache.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request, { params }) {
   try {
+    await hydrateSessionCacheFromDb().catch(() => {});
     const { id } = await params;
     const session = getSessionCacheDetail(id);
     if (!session) {
