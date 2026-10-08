@@ -363,7 +363,7 @@ case "${1:-}" in
     ;;
   --bootstrap)
     acquire_deploy_lock
-    image="9router-qnap-test:$(tag)"
+    image="9router-qnap-test:$(image_tag)"
     local_build_smoke "$image"
     upload_image "$image"
     bootstrap "$image"
@@ -374,7 +374,7 @@ case "${1:-}" in
     ;;
   --skip-e2e|"")
     acquire_deploy_lock
-    image="9router-qnap-test:$(tag)"
+    image="9router-qnap-test:$(image_tag)"
     local_build_smoke "$image"
     upload_image "$image"
     switch_bluegreen "$image"
