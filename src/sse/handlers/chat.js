@@ -137,6 +137,7 @@ export async function handleChat(request, clientRawRequest = null) {
       settings = { ...scopedSettings, ...Object.fromEntries(Object.entries(userPrefs).filter(([key]) => key.startsWith("jev"))) };
     }
   }
+  const accountBalanceEnabled = settings.accountBalanceEnabled === true;
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
@@ -294,7 +295,7 @@ export async function handleChat(request, clientRawRequest = null) {
     }
     if (availableModels.length === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Kein aktives Jev-Modell erfüllt Kontextbudget und erforderliche Fähigkeiten");
     jevTraceId = startJevTrace({ model: body?.model, body: clientRawRequest?.body ?? body, mode: isJev1m ? "jev-1m" : isJevFree ? "jev-free" : "jev" });
-    const paidTraffic = await refreshPaidTrafficOnce(async () => {
+    const paidTraffic = accountBalanceEnabled ? await refreshPaidTrafficOnce(async () => {
       await hydratePaidTraffic();
       const paidModels = (await Promise.all(availableModels.map(async (id) => {
         const provider = providerFromModelId(id);
@@ -334,7 +335,7 @@ export async function handleChat(request, clientRawRequest = null) {
       }
       const requestData = { purpose: "allocation", provider: targetProvider, usage: usageSnapshot, instruction: "Return a JSON object mapping only supplied account IDs to traffic weights from 0 to 100; weights must sum to 100. Consider usage, session duration/context cache, and each quota resetAt. Do not invent accounts or trigger resets." };
       return { provider: targetProvider, accounts: usageSnapshot, request: requestData };
-    });
+    }) : null;
     routedModel = await selectJevModel(body, availableModels, {
       traceId: jevTraceId,
       bigContext: isJev1m,
@@ -361,7 +362,7 @@ export async function handleChat(request, clientRawRequest = null) {
         return ownerUsername ? connections.filter((connection) => connection.ownerUsername === ownerUsername) : connections;
       },
       getUsageStats,
-      paidTrafficDistribution: isJevFree ? null : (paidTraffic?.request ? { ...paidTraffic, persistRequest: () => markPaidTrafficRequest({ provider: paidTraffic.provider, accounts: paidTraffic.accounts }, paidTraffic.request) } : paidTraffic),
+      paidTrafficDistribution: accountBalanceEnabled && !isJevFree && (paidTraffic?.request ? { ...paidTraffic, persistRequest: () => markPaidTrafficRequest({ provider: paidTraffic.provider, accounts: paidTraffic.accounts }, paidTraffic.request) } : paidTraffic),
     });
     // Fallback default must be resolvable (provider/model or combo); else first available.
     const cleanRouted = routedModel ? stripThinkingSuffix(routedModel) : null;
@@ -475,7 +476,7 @@ export async function handleChat(request, clientRawRequest = null) {
       comboName: routedModel,
       comboStrategy,
       comboStickyLimit,
-      providerBalancer: settings.providerBalancer,
+      providerBalancer: accountBalanceEnabled ? settings.providerBalancer : null,
     }));
   }
 
@@ -495,7 +496,7 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
       comboName: routedModel,
       comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings),
-      providerBalancer: settings.providerBalancer,
+      providerBalancer: accountBalanceEnabled ? settings.providerBalancer : null,
     }));
   }
 

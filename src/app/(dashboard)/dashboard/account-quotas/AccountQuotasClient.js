@@ -20,15 +20,23 @@ export default function AccountQuotasClient() {
   const [now, setNow] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [accountBalanceEnabled, setAccountBalanceEnabled] = useState(false);
   const load = useCallback(async (force = false) => {
     if (force) setRefreshing(true);
     else setLoading(true);
     try {
-      const response = await fetch("/api/providers/client?pageSize=500&sort=priority");
+      const [settingsResponse, response] = await Promise.all([
+        fetch("/api/settings", { cache: "no-store" }),
+        fetch("/api/providers/client?pageSize=500&sort=priority"),
+      ]);
+      const settings = settingsResponse.ok ? await settingsResponse.json().catch(() => ({})) : {};
+      const balanceEnabled = settings.accountBalanceEnabled === true;
+      setAccountBalanceEnabled(balanceEnabled);
       if (!response.ok) throw new Error(`Accounts konnten nicht geladen werden (HTTP ${response.status})`);
       const data = await response.json();
       const eligible = (data.connections || []).filter((account) => account.isActive !== false && (account.authType === "oauth" || account.authType === "apikey" || account.authType === "api_key"));
       setAccounts(eligible);
+      if (!balanceEnabled) return;
       const results = await Promise.all(eligible.map(async (account) => {
         try {
           const usage = await fetch(`/api/usage/${encodeURIComponent(account.id)}${force ? "?force=1" : ""}`);
@@ -57,8 +65,8 @@ export default function AccountQuotasClient() {
   }, [load]);
 
   return <main className="space-y-5 p-6">
-    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold text-text-primary">Account-Quotas</h1><p className="mt-1 text-sm text-text-muted">Aktueller Quota-Stand, Reset-Fenster und OAuth-Session-Ablauf je Account.</p></div><button type="button" disabled={refreshing || loading} onClick={() => load(true)} className="rounded-lg border border-border px-3 py-2 text-sm text-text-primary hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50" aria-busy={refreshing}>{refreshing ? "Aktualisiere…" : "Quotas aktualisieren"}</button></header>
-    {errors.page && <Card className="border-red-500/40 p-4 text-sm text-red-600" role="alert">{errors.page}</Card>}
+    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold text-text-primary">Account-Quotas</h1><p className="mt-1 text-sm text-text-muted">Aktueller Quota-Stand, Reset-Fenster und OAuth-Session-Ablauf je Account.</p></div><button type="button" disabled={!accountBalanceEnabled || refreshing || loading} onClick={() => load(true)} className="rounded-lg border border-border px-3 py-2 text-sm text-text-primary hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50" aria-busy={refreshing}>{refreshing ? "Aktualisiere…" : "Quotas aktualisieren"}</button></header>
+    {!accountBalanceEnabled && !loading && <Card className="border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-300" role="status">Account Balance deaktiviert. Quota-Abfragen und Reset-Aktionen sind pausiert; gespeicherte Historie bleibt erhalten.</Card>}{errors.page && <Card className="border-red-500/40 p-4 text-sm text-red-600" role="alert">{errors.page}</Card>}
     {loading ? <Card className="p-6 text-sm text-text-muted" aria-live="polite">Accounts und Quotas werden geladen…</Card> : accounts.length === 0 ? <Card className="p-8 text-center text-sm text-text-muted">Keine quota-fähigen Provider-Accounts gefunden.</Card> : <div className="grid gap-4 xl:grid-cols-2">{accounts.map((account) => {
       const rows = quotas[account.id]?.quotas || [];
       const providerName = PROVIDER_DISPLAY[account.provider]?.name || account.provider;

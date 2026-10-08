@@ -44,6 +44,7 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
   const [loading, setLoading] = useState(true);
   const [activeSessions, setActiveSessions] = useState([]);
   const [balancerEnabled, setBalancerEnabled] = useState(true);
+  const [accountBalanceEnabled, setAccountBalanceEnabled] = useState(false);
   const [providerConfig, setProviderConfig] = useState({});
   const [expandedProviders, setExpandedProviders] = useState({});
   const [saveStatus, setSaveStatus] = useState("idle"); // 'idle' | 'saving' | 'saved' | 'error'
@@ -54,7 +55,7 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
   // Sync initialAccounts if passed
   useEffect(() => {
     if (Array.isArray(initialAccounts) && initialAccounts.length > 0) {
-      setConnections((prev) => (prev.length === 0 ? initialAccounts : prev));
+      queueMicrotask(() => setConnections((prev) => (prev.length === 0 ? initialAccounts : prev)));
     }
   }, [initialAccounts]);
 
@@ -78,6 +79,7 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
       let existingBalancer = null;
       if (setRes && setRes.ok) {
         const sJson = await setRes.json();
+        setAccountBalanceEnabled(sJson.accountBalanceEnabled === true);
         if (sJson.providerBalancer) {
           existingBalancer = sJson.providerBalancer;
           if (typeof existingBalancer.enabled === "boolean") {
@@ -150,8 +152,10 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
   }, []);
 
   useEffect(() => {
-    loadData();
-    loadActiveSessions();
+    queueMicrotask(() => {
+      loadData();
+      loadActiveSessions();
+    });
     const timer = setInterval(loadActiveSessions, 10000);
     return () => clearInterval(timer);
   }, [loadData, loadActiveSessions]);
@@ -233,7 +237,7 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
 
   // Auto-save changes to /api/settings (debounced)
   const persistBalancerSettings = useCallback((newEnabled, newConfig) => {
-    if (isInitialLoadRef.current) return;
+    if (!accountBalanceEnabled || isInitialLoadRef.current) return;
     setSaveStatus("saving");
 
     if (debounceTimerRef.current) {
@@ -265,10 +269,11 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
         setSaveStatus("error");
       }
     }, 400);
-  }, [onAccountsUpdated]);
+  }, [accountBalanceEnabled, onAccountsUpdated]);
 
   // Auto-save changes to individual accounts via PUT /api/providers/[id]
   const saveAccountUpdate = useCallback((connId, patch) => {
+    if (!accountBalanceEnabled) return;
     setSaveStatus("saving");
     if (accountDebounceRef.current[connId]) {
       clearTimeout(accountDebounceRef.current[connId]);
@@ -292,10 +297,11 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
         setSaveStatus("error");
       }
     }, 350);
-  }, [onAccountsUpdated]);
+  }, [accountBalanceEnabled, onAccountsUpdated]);
 
   // Toggle master balancer switch
   const handleToggleMaster = (val) => {
+    if (!accountBalanceEnabled) return;
     setBalancerEnabled(val);
     persistBalancerSettings(val, providerConfig);
   };
@@ -484,8 +490,8 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
               <h2 className="text-base sm:text-lg font-semibold text-text-main">
                 Multi-Provider Traffic-Balancer
               </h2>
-              <Badge variant={balancerEnabled ? "success" : "neutral"} size="sm">
-                {balancerEnabled ? "Aktiv" : "Pausiert"}
+              <Badge variant={!accountBalanceEnabled ? "neutral" : balancerEnabled ? "success" : "neutral"} size="sm">
+                {!accountBalanceEnabled ? "Deaktiviert" : balancerEnabled ? "Aktiv" : "Pausiert"}
               </Badge>
               {saveStatus === "saving" && (
                 <span className="text-xs text-amber-500 flex items-center gap-1 font-mono">
@@ -507,22 +513,25 @@ export default function DynamicTrafficBalancer({ accounts: initialAccounts, onAc
             <p className="text-xs sm:text-sm text-text-muted mt-0.5">
               Dynamische Lastverteilung zwischen ausgewählten KI-Anbietern &amp; Konten. Laufende Chats bleiben über Session-Stickiness zu 100% beim selben Modell (voller Prompt-Cache-Erhalt).
             </p>
+            {!accountBalanceEnabled && <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400" role="status">Account Balance deaktiviert. Konfiguration und Historie bleiben gespeichert; die Verteilung ist pausiert.</p>}
+            {!accountBalanceEnabled && <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400" role="status">Account Balance deaktiviert. Gespeicherte Gewichtungen bleiben erhalten; die Verteilung ist pausiert.</p>}
           </div>
         </div>
 
         {/* Master On/Off Switch */}
         <div className="flex items-center gap-3 self-end sm:self-center bg-surface-2 px-3.5 py-2 rounded-xl border border-border/60">
           <span className="text-xs font-medium text-text-main">
-            Balancer {balancerEnabled ? "Eingeschaltet" : "Ausgeschaltet"}
+            {!accountBalanceEnabled ? "Systemweit deaktiviert" : `Balancer ${balancerEnabled ? "Eingeschaltet" : "Ausgeschaltet"}`}
           </span>
           <Toggle
             checked={balancerEnabled}
             onChange={handleToggleMaster}
+            disabled={!accountBalanceEnabled}
           />
         </div>
       </div>
 
-      <div className="p-4 sm:p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6" inert={!accountBalanceEnabled ? "" : undefined} aria-disabled={!accountBalanceEnabled}>
         {/* Master Segmented Distribution Bar */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">

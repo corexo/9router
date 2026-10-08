@@ -1,7 +1,7 @@
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
 
-import { getProviderConnectionById, getProviderConnectionForUser, updateProviderConnection } from "@/lib/localDb";
+import { getProviderConnectionById, getProviderConnectionForUser, getSettings, updateProviderConnection } from "@/lib/localDb";
 import { cookies } from "next/headers";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import { getUsageForProvider } from "open-sse/services/usage.js";
@@ -125,6 +125,9 @@ export async function GET(request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
+    if ((await getSettings()).accountBalanceEnabled !== true) {
+      return Response.json({ disabled: true, message: "Account Balance is disabled" }, { status: 409 });
+    }
     const force = new URL(request.url).searchParams.get("force") === "1";
 
 

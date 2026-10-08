@@ -1,7 +1,7 @@
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
 
-import { getProviderConnectionById, getProviderConnectionForUser } from "@/lib/localDb";
+import { getProviderConnectionById, getProviderConnectionForUser, getSettings } from "@/lib/localDb";
 import { cookies } from "next/headers";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
 import {
@@ -72,6 +72,9 @@ async function refreshOAuthConnection(connection, proxyOptions) {
 export async function GET(_request, { params }) {
   let connection;
   try {
+    if ((await getSettings()).accountBalanceEnabled !== true) {
+      return Response.json({ disabled: true, message: "Account Balance is disabled" }, { status: 409 });
+    }
     const { connectionId } = await params;
     const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     const resolved = await getConnectionAndProxy(connectionId, claims?.username || null);
@@ -116,6 +119,9 @@ export async function GET(_request, { params }) {
 export async function POST(_request, { params }) {
   let connection;
   try {
+    if ((await getSettings()).accountBalanceEnabled !== true) {
+      return Response.json({ disabled: true, message: "Account Balance is disabled" }, { status: 409 });
+    }
     const { connectionId } = await params;
     const claims = await verifyDashboardAuthToken((await cookies()).get("auth_token")?.value).catch(() => null);
     const resolved = await getConnectionAndProxy(connectionId, claims?.username || null);
