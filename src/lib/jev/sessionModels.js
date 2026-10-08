@@ -73,10 +73,13 @@ function textOf(content) {
 }
 
 /** Stable id for a conversation, or null when there is nothing to key on. */
-export function sessionKey(body) {
+export function sessionKey(body, extraKey = null) {
   // An explicit client session id wins — it stays stable across client restarts
   // even when the system prompt is rewritten (date, git status, injected context).
-  const explicit = body?.prompt_cache_key ?? body?.metadata?.session_id ?? body?.metadata?.conversation_id;
+  const explicit = (typeof extraKey === "string" && extraKey.trim() ? extraKey.trim() : null)
+    ?? body?.prompt_cache_key
+    ?? body?.metadata?.session_id
+    ?? body?.metadata?.conversation_id;
   if (typeof explicit === "string" && explicit.trim()) return `id:${explicit.trim()}`;
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   if (messages.length === 0) return null;

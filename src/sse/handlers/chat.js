@@ -92,6 +92,21 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
 
+  // Support session ID via body (prompt_cache_key, session_id) or HTTP headers (x-pi-session-id, x-session-id, x-prompt-cache-key)
+  const headerSessionId = request?.headers?.get("x-pi-session-id")
+    || request?.headers?.get("x-session-id")
+    || request?.headers?.get("x-prompt-cache-key");
+  const clientSessionId = body?.prompt_cache_key
+    || body?.session_id
+    || body?.metadata?.session_id
+    || body?.metadata?.conversation_id
+    || headerSessionId
+    || null;
+
+  if (clientSessionId && body && typeof body === "object") {
+    body.prompt_cache_key = clientSessionId;
+  }
+
   // Support project path via body (pi_project_path, project_path) or HTTP header (x-pi-project-path)
   const headerProjectPath = request?.headers?.get("x-pi-project-path") || request?.headers?.get("x-project-path");
   const piProjectPath = body?.pi_project_path || body?.project_path || headerProjectPath || null;
