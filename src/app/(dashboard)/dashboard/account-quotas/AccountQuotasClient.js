@@ -1,80 +1,877 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Card } from "@/shared/components";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { PROVIDER_DISPLAY } from "@/shared/constants/providersDisplay";
-import { calculatePercentage, parseQuotaData } from "../usage/components/ProviderLimits/utils";
-import { countdown } from "@/shared/utils/quotaCountdown";
-
-function remaining(quota) {
-  if (quota.remaining !== undefined) return Math.max(0, Math.round(quota.remaining));
-  if (quota.remainingPercentage !== undefined) return Math.max(0, Math.round(quota.remainingPercentage));
-  return quota.total > 0 ? calculatePercentage(quota.used, quota.total) : null;
-}
+import { Badge, Card } from "@/shared/components";
+import {
+  parseQuotaData,
+  getRemainingPercentage,
+  formatResetTime,
+  computeResetTimeProgress,
+  getConnectionLabel,
+  supportsResetCredits,
+  getResetCreditCount,
+} from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils";
 
 export default function AccountQuotasClient() {
-  const [accounts, setAccounts] = useState([]);
-  const [quotas, setQuotas] = useState({});
-  const [errors, setErrors] = useState({});
-  const [now, setNow] = useState(0);
+  const standalone = true;
+  const [connections, setConnections] = useState([]);
+  const [quotasByConn, setQuotasByConn] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingIds, setRefreshingIds] = useState(new Set()); // per-account refresh
+  const [filterMode, setFilterMode] = useState("all"); // "all" | "low"
+  const [viewMode, setViewMode] = useState(standalone ? "list" : "grid"); // "list" | "grid" | "table"
+  const [selectedProvider, setSelectedProvider] = useState("all");
+  const [resettingId, setResettingId] = useState(null);
+  const [resetConfirmState, setResetConfirmState] = useState(null); // { account, resetCreditCount }
+  const [resetFeedback, setResetFeedback] = useState(null); // { type: 'success'|'error', text: string }
   const [accountBalanceEnabled, setAccountBalanceEnabled] = useState(false);
-  const load = useCallback(async (force = false) => {
+
+  // Fetch connections and quotas
+  const fetchAllQuotas = useCallback(async (force = false, allowLive = accountBalanceEnabled) => {
     if (force) setRefreshing(true);
-    else setLoading(true);
     try {
-      const [settingsResponse, response] = await Promise.all([
-        fetch("/api/settings", { cache: "no-store" }),
-        fetch("/api/providers/client?pageSize=500&sort=priority"),
-      ]);
-      const settings = settingsResponse.ok ? await settingsResponse.json().catch(() => ({})) : {};
-      const balanceEnabled = settings.accountBalanceEnabled === true;
-      setAccountBalanceEnabled(balanceEnabled);
-      if (!response.ok) throw new Error(`Accounts konnten nicht geladen werden (HTTP ${response.status})`);
-      const data = await response.json();
-      const eligible = (data.connections || []).filter((account) => account.isActive !== false && (account.authType === "oauth" || account.authType === "apikey" || account.authType === "api_key"));
-      setAccounts(eligible);
-      if (!balanceEnabled) return;
-      const results = await Promise.all(eligible.map(async (account) => {
-        try {
-          const usage = await fetch(`/api/usage/${encodeURIComponent(account.id)}${force ? "?force=1" : ""}`);
-          const payload = await usage.json().catch(() => ({}));
-          if (!usage.ok) throw new Error(payload.error || `HTTP ${usage.status}`);
-          if (payload.message === "Usage not available for this connection") return [account.id, { quotas: [], message: payload.message }];
-          return [account.id, { quotas: parseQuotaData(account.provider, payload) }];
-        } catch (error) {
-          return [account.id, { error: error.message }];
-        }
-      }));
-      setQuotas(Object.fromEntries(results.filter(([, result]) => !result.error)));
-      setErrors(Object.fromEntries(results.filter(([, result]) => result.error).map(([id, result]) => [id, result.error])));
-    } catch (error) {
-      setErrors({ page: error.message });
+      const res = await fetch("/api/providers/client?pageSize=500&sort=priority", {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Failed to fetch connections");
+      const data = await res.json();
+      const allConns = data.connections || [];
+
+      // Only take active connections or those with potential quota support
+      const activeConns = allConns.filter((c) => c.isActive !== false);
+      setConnections(activeConns);
+      if (!allowLive) return;
+
+      // Fetch usage/quota for each connection in parallel
+      const quotaResults = {};
+      await Promise.all(
+        activeConns.map(async (conn) => {
+          try {
+            const qr = await fetch(`/api/usage/${conn.id}${force ? "?force=1" : ""}`, {
+              cache: "no-store",
+            });
+            if (!qr.ok) return;
+            const rawJson = await qr.json();
+            const normalized = parseQuotaData(conn.provider, rawJson);
+            if (normalized && normalized.length > 0) {
+              quotaResults[conn.id] = {
+                quotas: normalized,
+                raw: rawJson,
+                updatedAt: Date.now(),
+              };
+            }
+          } catch (e) {
+            // fail-open per account
+          }
+        })
+      );
+
+      setQuotasByConn((prev) => ({ ...prev, ...quotaResults }));
+    } catch (err) {
+      console.error("[CompactQuotaTracker] Error loading quotas:", err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [accountBalanceEnabled]);
+
+  // Refresh a single connection by fetching live quota from the provider
+  const refreshSingleAccount = useCallback(async (conn) => {
+    if (!accountBalanceEnabled) return;
+    setRefreshingIds((prev) => new Set([...prev, conn.id]));
+    try {
+      const qr = await fetch(`/api/usage/${conn.id}?force=1`, { cache: "no-store" });
+      if (!qr.ok) return;
+      const rawJson = await qr.json();
+      const normalized = parseQuotaData(conn.provider, rawJson);
+      if (normalized && normalized.length > 0) {
+        setQuotasByConn((prev) => ({
+          ...prev,
+          [conn.id]: { quotas: normalized, raw: rawJson, updatedAt: Date.now() },
+        }));
+      }
+    } catch (e) {
+      console.error("[CompactQuotaTracker] Single refresh failed:", e);
+    } finally {
+      setRefreshingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(conn.id);
+        return next;
+      });
+    }
+  }, [accountBalanceEnabled]);
+
+  // Execute reset for an account (Codex, Claude, GLM)
+  const handleExecuteReset = useCallback(async (account) => {
+    if (!accountBalanceEnabled || !account || resettingId) return;
+    setResettingId(account.id);
+    setResetFeedback(null);
+    try {
+      const res = await fetch(`/api/usage/${account.id}/reset-credits`, {
+        method: "POST",
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(result.message || result.error || "Reset fehlgeschlagen");
+      }
+
+      // Refresh single account quota directly
+      await refreshSingleAccount(account.conn);
+      setResetFeedback({
+        type: "success",
+        text: `Limit für ${account.name} (${account.provider}) erfolgreich zurückgesetzt!`,
+      });
+      setTimeout(() => setResetFeedback(null), 5000);
+    } catch (err) {
+      setResetFeedback({
+        type: "error",
+        text: `Fehler beim Reset für ${account.name}: ${err.message}`,
+      });
+      setTimeout(() => setResetFeedback(null), 6000);
+    } finally {
+      setResettingId(null);
+      setResetConfirmState(null);
+    }
+  }, [accountBalanceEnabled, refreshSingleAccount, resettingId]);
 
   useEffect(() => {
-    const start = setTimeout(() => { setNow(Date.now()); load(); }, 0);
-    const timer = setInterval(() => setNow(Date.now()), 60000);
-    return () => { clearTimeout(start); clearInterval(timer); };
-  }, [load]);
+    let ignore = false;
+    fetch("/api/settings", { cache: "no-store" })
+      .then((res) => res.json().catch(() => ({})))
+      .then(async (settings) => {
+        const enabled = settings.accountBalanceEnabled === true;
+        if (!ignore) setAccountBalanceEnabled(enabled);
+        await fetchAllQuotas(false, enabled);
+      })
+      .catch(() => fetchAllQuotas(false, false));
+    return () => { ignore = true; };
+  }, [fetchAllQuotas]);
 
-  return <main className="space-y-5 p-6">
-    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold text-text-primary">Account-Quotas</h1><p className="mt-1 text-sm text-text-muted">Aktueller Quota-Stand, Reset-Fenster und OAuth-Session-Ablauf je Account.</p></div><button type="button" disabled={!accountBalanceEnabled || refreshing || loading} onClick={() => load(true)} className="rounded-lg border border-border px-3 py-2 text-sm text-text-primary hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50" aria-busy={refreshing}>{refreshing ? "Aktualisiere…" : "Quotas aktualisieren"}</button></header>
-    {!accountBalanceEnabled && !loading && <Card className="border-amber-500/40 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-300" role="status">Account Balance deaktiviert. Quota-Abfragen und Reset-Aktionen sind pausiert; gespeicherte Historie bleibt erhalten.</Card>}{errors.page && <Card className="border-red-500/40 p-4 text-sm text-red-600" role="alert">{errors.page}</Card>}
-    {loading ? <Card className="p-6 text-sm text-text-muted" aria-live="polite">Accounts und Quotas werden geladen…</Card> : accounts.length === 0 ? <Card className="p-8 text-center text-sm text-text-muted">Keine quota-fähigen Provider-Accounts gefunden.</Card> : <div className="grid gap-4 xl:grid-cols-2">{accounts.map((account) => {
-      const rows = quotas[account.id]?.quotas || [];
-      const providerName = PROVIDER_DISPLAY[account.provider]?.name || account.provider;
-      return <Card key={account.id} className="space-y-4 p-4">
-        <div className="flex items-center gap-3"><ProviderIcon providerId={account.provider} alt={providerName} size={36} className="rounded-lg" fallbackText={providerName.slice(0, 2).toUpperCase()} /><div className="min-w-0 flex-1"><h2 className="truncate font-semibold text-text-primary">{account.name || account.email || account.displayName || providerName}</h2><p className="text-xs text-text-muted">{providerName} · {account.authType === "oauth" ? "OAuth" : "API-Key"}</p></div><span className={`rounded-full px-2 py-1 text-xs ${account.isActive === false ? "bg-surface-2 text-text-muted" : "bg-primary/10 text-primary"}`}>{account.isActive === false ? "Inaktiv" : "Aktiv"}</span></div>
-        <div className="grid gap-2 sm:grid-cols-2"><div className="rounded-lg bg-surface-2 p-3"><p className="text-xs text-text-muted">OAuth Session Time</p><p className="mt-1 text-sm font-medium text-text-primary">{account.authType !== "oauth" ? "Keine OAuth-Session" : countdown(account.expiresAt, now)}</p><p className="mt-1 text-xs text-text-muted">{account.authType === "oauth" && account.expiresAt ? `Token-Ablauf: ${new Date(account.expiresAt).toLocaleString("de-DE")}` : "Separat vom Quota-Reset"}</p></div><div className="rounded-lg bg-surface-2 p-3"><p className="text-xs text-text-muted">Quota-Reset</p><p className="mt-1 text-sm font-medium text-text-primary">{rows.some((quota) => quota.resetAt) ? `${rows.filter((quota) => quota.resetAt).length} Zeitfenster verfügbar` : "Kein Reset-Zeitpunkt gemeldet"}</p><p className="mt-1 text-xs text-text-muted">{rows.length} Quota-Einträge erfasst</p></div></div>
-        {errors[account.id] ? <p className="text-sm text-amber-600" role="status">Quota nicht verfügbar: {errors[account.id]}</p> : rows.length ? <ul className="divide-y divide-border-subtle">{rows.map((quota, index) => { const percent = remaining(quota); return <li key={`${quota.modelKey || quota.name}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-medium text-text-primary">{quota.name}</p><p className="text-xs text-text-muted">{quota.unlimited ? "Unbegrenzt" : `${quota.used ?? 0} / ${quota.total || "∞"}${percent === null ? "" : ` · ${percent}% verfügbar`}`}</p></div><p className="shrink-0 text-right text-xs text-text-muted">{quota.resetAt ? countdown(quota.resetAt, now) : "Reset-Zeit unbekannt"}</p></div>{percent !== null && <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-3"><div className={`h-full rounded-full ${percent > 60 ? "bg-primary" : percent > 25 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${Math.min(percent, 100)}%` }} /></div>}</li>; })}</ul> : <p className="py-2 text-sm text-text-muted">{quotas[account.id]?.message || (quotas[account.id] ? "Keine Quota-Daten verfügbar." : "Quota noch nicht geladen.")}</p>}
-      </Card>;
-    })}</div>}
-  </main>;
+  // Transform connections with their quota entries
+  const quotaAccounts = useMemo(() => {
+    const list = [];
+    for (const conn of connections) {
+      const quotaInfo = quotasByConn[conn.id];
+      const quotas = (quotaInfo?.quotas || []).map((q) => {
+        const pct = getRemainingPercentage(q);
+        const resetCountdown = formatResetTime(q.resetAt);
+        const timeProgress = computeResetTimeProgress(q.resetAt, q.name);
+        return {
+          name: q.name,
+          remainingPct: pct,
+          used: q.used,
+          total: q.total,
+          resetAt: q.resetAt,
+          resetCountdown,
+          timeProgress,
+        };
+      });
+
+      // Find lowest remaining quota
+      const minPct = quotas.length ? Math.min(...quotas.map((q) => q.remainingPct)) : 100;
+      const hasLowQuota = quotas.length > 0 && minPct < 30;
+      const supportsReset = supportsResetCredits(conn.provider);
+      const resetCreditCount = supportsReset ? getResetCreditCount(quotaInfo) : 0;
+
+      list.push({
+        id: conn.id,
+        conn, // raw connection object — needed for single-account refresh
+        name: getConnectionLabel(conn) || conn.name || conn.id,
+        provider: conn.provider,
+        authType: conn.authType,
+        isActive: conn.isActive !== false,
+        quotas,
+        minPct,
+        hasLowQuota,
+        supportsReset,
+        resetCreditCount,
+      });
+    }
+
+    return list.sort((a, b) => a.minPct - b.minPct);
+  }, [connections, quotasByConn]);
+
+  // Unique providers list
+  const availableProviders = useMemo(() => {
+    const set = new Set(quotaAccounts.map((a) => a.provider));
+    return Array.from(set);
+  }, [quotaAccounts]);
+
+  // Filtered accounts
+  const filteredAccounts = useMemo(() => {
+    return quotaAccounts.filter((account) => {
+      if (filterMode === "low" && !account.hasLowQuota) return false;
+      if (selectedProvider !== "all" && account.provider !== selectedProvider) return false;
+      return true;
+    });
+  }, [quotaAccounts, filterMode, selectedProvider]);
+
+  const lowQuotaCount = useMemo(() => {
+    return quotaAccounts.filter((a) => a.hasLowQuota).length;
+  }, [quotaAccounts]);
+
+  const totalResetCredits = useMemo(() => {
+    return quotaAccounts.reduce((sum, a) => sum + (a.resetCreditCount || 0), 0);
+  }, [quotaAccounts]);
+
+  return (
+    <Card padding="md" className="flex flex-col border-border/80">
+      {/* Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 pb-3 border-b border-border">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <span className="material-symbols-outlined text-[20px]">speed</span>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-text-main tracking-tight">
+                {standalone ? "Account-Quotas & Limits" : "Quota Tracker & Account-Limits"}
+              </h2>
+              <Badge variant="outline" size="sm" className="font-mono text-[11px]">
+                {quotaAccounts.length} {quotaAccounts.length === 1 ? "Account" : "Accounts"}
+              </Badge>
+              {!accountBalanceEnabled && <Badge variant="outline" size="sm">Deactivated</Badge>}
+              {lowQuotaCount > 0 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                  {lowQuotaCount} knapp (&lt;30%)
+                </span>
+              )}
+              {totalResetCredits > 0 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  <span className="material-symbols-outlined text-[13px]">bolt</span>
+                  {totalResetCredits} Reset-Credit{totalResetCredits > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-text-muted">
+              {accountBalanceEnabled
+                ? "5h- und Wochen-Limits, Reset-Credits und verbleibende Zeit je Account"
+                : "Account Balance deaktiviert: Quota-Abfragen und Resets sind pausiert."}
+            </p>
+          </div>
+        </div>
+
+        {/* Controls: Filter & Refresh */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Filter Pills */}
+          <div className="inline-flex p-0.5 rounded-lg bg-surface-2 border border-border text-xs">
+            <button
+              onClick={() => setFilterMode("all")}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                filterMode === "all"
+                  ? "bg-surface text-text-main shadow-xs"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+            >
+              Alle ({quotaAccounts.length})
+            </button>
+            <button
+              onClick={() => setFilterMode("low")}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                filterMode === "low"
+                  ? "bg-surface text-rose-600 dark:text-rose-400 shadow-xs"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+            >
+              Knapp ({lowQuotaCount})
+            </button>
+          </div>
+
+          {/* Provider Filter (if multiple) */}
+          {availableProviders.length > 1 && (
+            <select
+              value={selectedProvider}
+              onChange={(e) => setSelectedProvider(e.target.value)}
+              className="text-xs rounded-lg bg-surface border border-border px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="all">Alle Provider</option>
+              {availableProviders.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* View mode toggle: Grid vs Table */}
+          {!standalone && <div className="inline-flex p-0.5 rounded-lg bg-surface-2 border border-border text-xs">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`p-1 rounded-md transition-colors ${
+                viewMode === "grid"
+                  ? "bg-surface text-text-main shadow-xs"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+              title="Kompakt-Kacheln"
+            >
+              <span className="material-symbols-outlined text-[16px]">grid_view</span>
+            </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`p-1 rounded-md transition-colors ${
+                viewMode === "table"
+                  ? "bg-surface text-text-main shadow-xs"
+                  : "text-text-muted hover:text-text-main"
+              }`}
+              title="Dichte Zeilen"
+            >
+              <span className="material-symbols-outlined text-[16px]">view_list</span>
+            </button>
+          </div>}
+
+          {/* Refresh button: active only while Account Balance is enabled */}
+          {accountBalanceEnabled && <button
+            onClick={() => fetchAllQuotas(true)}
+            disabled={refreshing}
+            className="p-1.5 rounded-lg border border-border bg-surface text-text-muted hover:text-text-main transition-colors disabled:opacity-50"
+            title="Quotas sofort neu abrufen"
+          >
+            <span className={`material-symbols-outlined text-[16px] ${refreshing ? "animate-spin text-primary" : ""}`}>
+              refresh
+            </span>
+          </button>}
+
+          {/* Link to Full Quota Page */}
+          {!standalone && <a
+            href="/dashboard/usage?tab=quota"
+            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline ml-1"
+          >
+            <span>Vollansicht</span>
+            <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+          </a>}
+        </div>
+      </div>
+
+      {/* Reset Feedback Notification */}
+      {resetFeedback && (
+        <div
+          className={`mb-3 p-2.5 rounded-lg text-xs font-medium flex items-center justify-between border ${
+            resetFeedback.type === "success"
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+              : "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]">
+              {resetFeedback.type === "success" ? "check_circle" : "error"}
+            </span>
+            <span>{resetFeedback.text}</span>
+          </div>
+          <button
+            onClick={() => setResetFeedback(null)}
+            className="p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5"
+          >
+            <span className="material-symbols-outlined text-[14px]">close</span>
+          </button>
+        </div>
+      )}
+
+      {/* Content Area */}
+      {loading && quotaAccounts.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 py-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="p-3 rounded-xl border border-border/60 bg-surface-2/30 animate-pulse flex flex-col gap-2"
+            >
+              <div className="h-4 bg-surface-3 rounded w-2/3" />
+              <div className="h-2 bg-surface-3 rounded w-full mt-2" />
+              <div className="h-2 bg-surface-3 rounded w-4/5" />
+            </div>
+          ))}
+        </div>
+      ) : filteredAccounts.length === 0 ? (
+        <div className="text-center py-8 text-text-muted text-xs">
+          {filterMode === "low"
+            ? "Keine Accounts mit knappem Limit gefunden. Alle Quotas im grünen Bereich!"
+            : "Keine aktiven Quota-Accounts gefunden. Unterstützt werden z.B. Claude, Codex, Gemini, GitHub."}
+        </div>
+      ) : viewMode === "list" ? (
+        <div className="flex flex-col gap-2">
+          {filteredAccounts.map((acc) => (
+            <section key={acc.id} className={`rounded-lg border p-3 ${acc.hasLowQuota ? "border-rose-500/40 bg-rose-500/5" : "border-border/70 bg-surface-2/30"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border/50 pb-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ProviderIcon providerId={acc.provider} size={18} className="size-4.5 rounded object-contain" fallbackText={acc.provider.slice(0, 2).toUpperCase()} />
+                  <span className="truncate text-sm font-semibold text-text-main">{acc.name}</span>
+                  <span className="text-[10px] uppercase text-text-muted">{acc.provider}</span>
+                </div>
+                {acc.supportsReset && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-text-muted">{acc.resetCreditCount} Reset-Credits</span>
+                    <button type="button" onClick={() => setResetConfirmState({ account: acc, resetCreditCount: acc.resetCreditCount })} disabled={!accountBalanceEnabled || resettingId === acc.id} className="rounded border border-border px-2 py-1 text-text-main hover:bg-surface-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Reset-Credits für ${acc.name}`} title={!accountBalanceEnabled ? "Account Balance in den Einstellungen aktivieren" : "Reset-Credits zurücksetzen"}>
+                      {resettingId === acc.id ? "Reset läuft…" : "Reset"}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="divide-y divide-border/40">
+                {acc.quotas.length === 0 && <p className="py-2 text-xs text-text-muted">{accountBalanceEnabled ? "Noch keine Quota-Daten verfügbar." : "Live-Quotas pausiert: Account Balance ist deaktiviert."}</p>}
+                {acc.quotas.map((q, idx) => {
+                  const pct = q.remainingPct;
+                  const color = pct < 30 ? "bg-rose-500" : pct < 70 ? "bg-amber-500" : "bg-emerald-500";
+                  const timeLeft = q.timeProgress?.countdownText || q.resetCountdown;
+                  return <div key={`${q.name}-${idx}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 py-2 sm:grid-cols-[minmax(6rem,1fr)_minmax(5rem,2fr)_auto]">
+                    <span className="truncate text-xs font-medium text-text-main" title={q.name}>{q.name}</span>
+                    <div className="col-span-2 flex min-w-0 items-center gap-2 sm:col-span-1">
+                      <div className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-surface-3" role="meter" aria-label={`${q.name} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+                        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+                      </div>
+                      <span className={`whitespace-nowrap text-xs font-mono ${pct < 30 ? "text-rose-500" : "text-text-muted"}`}>{pct}% free</span>
+                    </div>
+                    <span className="col-span-2 whitespace-nowrap text-right text-xs font-mono text-cyan-700 dark:text-cyan-300 sm:col-span-1">{timeLeft && timeLeft !== "-" ? timeLeft : "Reset-Zeit unbekannt"}</span>
+                  </div>;
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : viewMode === "grid" ? (
+        /* COMPACT GRID VIEW (High-Density Cards) */
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {filteredAccounts.map((acc) => (
+            <div
+              key={acc.id}
+              className={`p-2.5 rounded-lg border transition-colors flex flex-col justify-between ${
+                acc.hasLowQuota
+                  ? "border-rose-500/40 bg-rose-500/5 hover:border-rose-500/60"
+                  : "border-border/60 bg-surface-2/40 hover:border-border"
+              }`}
+            >
+              <div>
+                {/* Account Card Header */}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ProviderIcon
+                      providerId={acc.provider}
+                      size={18}
+                      className="size-4.5 rounded object-contain shrink-0"
+                      fallbackText={acc.provider.slice(0, 2).toUpperCase()}
+                    />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-xs text-text-main truncate" title={acc.name}>
+                        {acc.name}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
+                          {acc.provider}
+                        </span>
+                        {acc.conn?.throttlePercent > 0 && (
+                          <span
+                            className="px-1.5 py-0.2 rounded text-[9px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 lowercase"
+                            title={`${acc.conn.throttlePercent}% gedrosselt (${100 - acc.conn.throttlePercent}% Traffic)`}
+                          >
+                            📉 {acc.conn.throttlePercent}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {accountBalanceEnabled && <button
+                      onClick={() => refreshSingleAccount(acc.conn)}
+                      disabled={refreshingIds.has(acc.id) || refreshing}
+                      className="p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40"
+                      title="Quota direkt vom Anbieter abrufen"
+                    >
+                      <span
+                        className={`material-symbols-outlined text-[13px] ${
+                          refreshingIds.has(acc.id) ? "animate-spin text-primary" : ""
+                        }`}
+                      >
+                        refresh
+                      </span>
+                    </button>}
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        acc.isActive ? "bg-emerald-500" : "bg-slate-400"
+                      }`}
+                      title={acc.isActive ? "Aktiv" : "Pausiert"}
+                    />
+                  </div>
+                </div>
+
+                {/* Quota Limits List */}
+                <div className="space-y-1 mt-1">
+                  {acc.quotas.map((q, idx) => {
+                    const pct = q.remainingPct;
+                    const isLow = pct < 30;
+                    const barColor = isLow
+                      ? "bg-rose-500"
+                      : pct < 70
+                      ? "bg-amber-500"
+                      : "bg-emerald-500";
+                    const textColor = isLow
+                      ? "text-rose-600 dark:text-rose-400 font-bold"
+                      : pct < 70
+                      ? "text-amber-600 dark:text-amber-400 font-medium"
+                      : "text-emerald-600 dark:text-emerald-400 font-medium";
+
+                    return (
+                      <div key={idx} className="grid grid-cols-[minmax(74px,0.8fr)_auto_minmax(44px,0.45fr)_minmax(98px,auto)] items-center gap-x-2 gap-y-1 px-2 py-1.5 rounded-md bg-surface-1/40 border border-border/40">
+                        {/* Quota Name & Percent Available */}
+                        <span className="text-[10px] text-text-main font-medium truncate" title={q.name}>{q.name}</span>
+                        <span className={`text-[11px] font-mono ${textColor}`}>{pct}% frei</span>
+                        {/* Quota left */}
+                        <div className="w-full bg-surface-3 rounded-full h-1 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+                            style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
+                          />
+                        </div>
+
+                        {/* Time Window Progress Bar (Zeit-Balken) */}
+                        {q.timeProgress ? (
+                          <span className="text-[10px] font-mono font-semibold text-cyan-700 dark:text-cyan-300 whitespace-nowrap text-right" title={`${q.timeProgress.totalWindowLabel}, ${q.timeProgress.percentElapsed}% abgelaufen`}>
+                            {q.timeProgress.countdownText}
+                          </span>
+                        ) : q.resetCountdown && q.resetCountdown !== "-" ? (
+                          <span className="text-[10px] font-mono text-text-muted whitespace-nowrap text-right">{q.resetCountdown}</span>
+                        ) : <span /> }
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Reset Credit Counter & Reset Action Button */}
+              {accountBalanceEnabled && acc.supportsReset && (
+                <div className="mt-3 pt-2.5 border-t border-border/50 flex items-center justify-between text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-amber-500">bolt</span>
+                    <span className="font-mono text-text-muted">
+                      {acc.resetCreditCount > 0 ? (
+                        <span className="font-bold text-amber-600 dark:text-amber-400">
+                          {acc.resetCreditCount} Reset{acc.resetCreditCount > 1 ? "s" : ""}
+                        </span>
+                      ) : (
+                        <span>0 Resets</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setResetConfirmState({ account: acc, resetCreditCount: acc.resetCreditCount })}
+                    disabled={resettingId === acc.id}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border shadow-2xs ${
+                      acc.resetCreditCount > 0
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 active:scale-95"
+                        : "border-border bg-surface-2 text-text-muted hover:text-text-main hover:bg-surface-3 active:scale-95"
+                    }`}
+                    title="Wöchentliches Kontingent / Rate-Limit zurücksetzen"
+                  >
+                    <span className={`material-symbols-outlined text-[13px] ${resettingId === acc.id ? "animate-spin" : ""}`}>
+                      {resettingId === acc.id ? "progress_activity" : "restart_alt"}
+                    </span>
+                    <span>Reset</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* COMPACT TABLE VIEW (Ultra-Dense Rows) */
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-border bg-surface-2/40 font-semibold text-text-muted uppercase tracking-wider">
+                <th className="p-2.5">Account</th>
+                <th className="p-2.5">Provider</th>
+                <th className="p-2.5">Limits &amp; Verbleibende Quotas</th>
+                <th className="p-2.5 text-center">Niedrigste Quota</th>
+                <th className="p-2.5 text-right">Nächster Reset (Zeit-Balken)</th>
+                <th className="p-2.5 text-center">Reset-Credits</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filteredAccounts.map((acc) => {
+                const earliestTimeProgress = acc.quotas
+                  .map((q) => q.timeProgress)
+                  .find((tp) => tp && tp.countdownText && tp.countdownText !== "-");
+
+                const earliestResetText = acc.quotas
+                  .map((q) => q.resetCountdown)
+                  .find((c) => c && c !== "-");
+
+                return (
+                  <tr key={acc.id} className="hover:bg-surface-2/40 transition-colors">
+                    <td className="p-2.5 font-medium text-text-main truncate max-w-[180px]">
+                      <div className="flex items-center gap-2">
+                        <ProviderIcon
+                          providerId={acc.provider}
+                          size={16}
+                          className="size-4 rounded object-contain shrink-0"
+                          fallbackText={acc.provider.slice(0, 2).toUpperCase()}
+                        />
+                        <span className="truncate">{acc.name}</span>
+                        {accountBalanceEnabled && <button
+                          onClick={() => refreshSingleAccount(acc.conn)}
+                          disabled={refreshingIds.has(acc.id) || refreshing}
+                          className="ml-auto p-0.5 rounded text-text-muted hover:text-primary transition-colors disabled:opacity-40 shrink-0"
+                          title="Quota direkt vom Anbieter abrufen"
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[12px] ${
+                              refreshingIds.has(acc.id) ? "animate-spin text-primary" : ""
+                            }`}
+                          >
+                            refresh
+                          </span>
+                        </button>}
+                      </div>
+                    </td>
+                    <td className="p-2.5 font-mono text-text-muted uppercase text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span>{acc.provider}</span>
+                        {acc.conn?.throttlePercent > 0 && (
+                          <span
+                            className="px-1.5 py-0.2 rounded text-[9px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 lowercase"
+                            title={`${acc.conn.throttlePercent}% gedrosselt (${100 - acc.conn.throttlePercent}% Traffic)`}
+                          >
+                            📉 {acc.conn.throttlePercent}%
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-2.5">
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {acc.quotas.map((q, i) => {
+                          const pct = q.remainingPct;
+                          const isLow = pct < 30;
+                          return (
+                            <span
+                              key={i}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono border ${
+                                isLow
+                                  ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                                  : pct < 70
+                                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                                  : "bg-surface-2 text-text-main border-border"
+                              }`}
+                              title={`${q.name}: ${pct}% verbleibend`}
+                            >
+                              <span className="text-text-muted">{q.name}:</span>
+                              <span className="font-bold">{pct}%</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td className="p-2.5 text-center font-mono font-bold">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[11px] ${
+                          acc.minPct < 30
+                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                            : acc.minPct < 70
+                            ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                            : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        }`}
+                      >
+                        {acc.minPct}%
+                      </span>
+                    </td>
+                    <td className="p-2.5 text-right font-mono">
+                      {earliestTimeProgress ? (
+                        <div className="inline-flex flex-col items-end gap-1 min-w-[130px]">
+                          <div className="flex items-center gap-1 text-[11px] text-cyan-700 dark:text-cyan-300 font-medium">
+                            <span className="material-symbols-outlined text-[12px]">schedule</span>
+                            <span>in {earliestTimeProgress.countdownText}</span>
+                          </div>
+                          {/* Horizontal Time Bar */}
+                          <div
+                            className="w-24 bg-surface-3 rounded-full h-1.5 overflow-hidden"
+                            title={`Zeitfenster (${earliestTimeProgress.totalWindowLabel}): ${earliestTimeProgress.percentElapsed}% abgelaufen, noch ${earliestTimeProgress.countdownText}`}
+                          >
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-300"
+                              style={{ width: `${Math.min(100, Math.max(3, earliestTimeProgress.percentElapsed))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : earliestResetText ? (
+                        <span className="text-text-muted text-xs">in {earliestResetText}</span>
+                      ) : (
+                        <span className="text-text-muted text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="p-2.5 text-center">
+                      {accountBalanceEnabled && acc.supportsReset ? (
+                        <div className="inline-flex items-center justify-center gap-1.5">
+                          {acc.resetCreditCount > 0 ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                              ⚡ {acc.resetCreditCount}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-text-muted font-mono">0</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setResetConfirmState({ account: acc, resetCreditCount: acc.resetCreditCount })}
+                            disabled={resettingId === acc.id}
+                            className="p-1 rounded text-text-muted hover:text-amber-500 hover:bg-surface-3 transition-colors disabled:opacity-40"
+                            title="Limit zurücksetzen"
+                          >
+                            <span className={`material-symbols-outlined text-[14px] ${resettingId === acc.id ? "animate-spin" : ""}`}>
+                              {resettingId === acc.id ? "progress_activity" : "restart_alt"}
+                            </span>
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-text-muted text-[10px]">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Explicit Confirmation Modal for Resetting Quota Limits */}
+      {resetConfirmState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div role="dialog" aria-modal="true" aria-labelledby="quota-reset-title" className="w-full max-w-md overflow-hidden rounded-2xl border border-black/15 bg-white shadow-2xl ring-1 ring-black/10 dark:border-white/15 dark:bg-neutral-950 dark:ring-white/10">
+            {/* Modal Header with Warning Icon */}
+            <div className="flex items-start justify-between gap-3 border-b border-black/10 bg-amber-500/10 px-5 py-4 dark:border-white/10 dark:bg-amber-500/15">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                  <span className="material-symbols-outlined text-[24px]">warning</span>
+                </div>
+                <div>
+                  <h3 id="quota-reset-title" className="text-base font-bold text-text-main">
+                    Kontingent-Reset bestätigen
+                  </h3>
+                  <p className="text-xs text-text-muted">
+                    Soll das Kontingent für diesen Account wirklich zurückgesetzt werden?
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!resettingId) setResetConfirmState(null);
+                }}
+                disabled={Boolean(resettingId)}
+                className="p-1 rounded-lg text-text-muted hover:bg-black/5 hover:text-text-main transition-colors dark:hover:bg-white/5 disabled:opacity-40"
+                aria-label="Modal schließen"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              {/* Account Card Box */}
+              <div className="p-3 rounded-xl border border-border/70 bg-surface-2/60 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <ProviderIcon
+                    providerId={resetConfirmState.account?.provider}
+                    size={22}
+                    className="size-5.5 rounded object-contain shrink-0"
+                    fallbackText={resetConfirmState.account?.provider?.slice(0, 2).toUpperCase()}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-xs text-text-main truncate">
+                      {resetConfirmState.account?.name}
+                    </div>
+                    <div className="text-[10px] text-text-muted uppercase font-mono">
+                      {resetConfirmState.account?.provider}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0">
+                  {resetConfirmState.resetCreditCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold font-mono bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                      <span className="material-symbols-outlined text-[13px]">bolt</span> {resetConfirmState.resetCreditCount} Credit{resetConfirmState.resetCreditCount > 1 ? "s" : ""}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-text-muted font-mono">0 Credits</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Warning Text Details */}
+              <div className="text-xs text-text-muted space-y-2 leading-relaxed">
+                {resetConfirmState.account?.provider === "codex" ? (
+                  resetConfirmState.resetCreditCount > 0 ? (
+                    <div className="text-amber-700 dark:text-amber-300 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 space-y-1">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[16px]">bolt</span>
+                        1 Codex Reset-Credit wird eingelöst
+                      </p>
+                      <p className="text-[11px] text-text-muted">
+                        Dieser Vorgang setzt das wöchentliche und 5h-Limit bei OpenAI sofort zurück. Dies kann nicht rückgängig gemacht werden!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-rose-600 dark:text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 space-y-1">
+                      <p className="font-semibold">Keine Reset-Credits verfügbar</p>
+                      <p className="text-[11px] text-text-muted">
+                        PiRouter hebt lokale Modell-Locks auf und erzwingt einen frischen Quota-Abruf.
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <div className="text-amber-700 dark:text-amber-300 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                      Modell-Locks und Cache werden zurückgesetzt
+                    </p>
+                    <p className="text-[11px] text-text-muted">
+                      Alle aktiven Sperren für {resetConfirmState.account?.name} auf PiRouter werden sofort aufgehoben und die Quotas neu abgefragt.
+                    </p>
+                  </div>
+                )}
+                <p className="text-[11px] text-text-muted/90 pt-1">
+                  Möchtest du fortfahren?
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-3.5 bg-surface-2/40">
+              <button
+                type="button"
+                onClick={() => setResetConfirmState(null)}
+                disabled={Boolean(resettingId)}
+                className="px-3.5 py-1.5 rounded-xl border border-border text-xs font-medium text-text-muted hover:text-text-main hover:bg-surface-3 transition-colors disabled:opacity-40"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExecuteReset(resetConfirmState.account)}
+                disabled={Boolean(resettingId)}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition-all shadow-xs disabled:opacity-60"
+              >
+                {resettingId ? (
+                  <>
+                    <span className="material-symbols-outlined text-[15px] animate-spin">
+                      progress_activity
+                    </span>
+                    <span>Wird zurückgesetzt...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[15px]">
+                      restart_alt
+                    </span>
+                    <span>Jetzt zurücksetzen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
 }

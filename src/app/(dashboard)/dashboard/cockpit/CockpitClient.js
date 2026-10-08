@@ -5,7 +5,6 @@ import Chart from "chart.js/auto";
 import { Card, Button, Badge, SegmentedControl, Toggle, CardSkeleton, JevTierSlider } from "@/shared/components";
 import { usePersistentState } from "@/shared/hooks";
 import { getModelTier } from "@/sse/services/modelTiers.js";
-import CompactQuotaTracker from "./CompactQuotaTracker";
 import ActiveSessionsVisualizer from "./ActiveSessionsVisualizer";
 
 const PERIODS = [
@@ -1573,9 +1572,6 @@ export default function CockpitClient() {
           </ul>
         </Card>
       )}
-
-      {/* COMPACT REDESIGNED QUOTA TRACKER */}
-      <CompactQuotaTracker />
 
       {/* ACTIVE SESSIONS & LIVE PINGS VISUALIZER */}
       <ActiveSessionsVisualizer initialSessions={data?.sessions} />
