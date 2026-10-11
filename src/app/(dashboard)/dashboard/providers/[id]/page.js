@@ -440,24 +440,30 @@ export default function ProviderDetailPage() {
     saveThinkingConfig(mode);
   };
 
-  const saveAutoPing = async (next) => {
+  const handleAutoPingConnection = (connectionId, on) => {
     const autoPingSettingsKey = AUTO_PING_SETTINGS_KEYS[providerId];
     if (!autoPingSettingsKey) return;
 
-    setAutoPing(next);
-    try {
-      await fetch("/api/settings", {
+    setAutoPing((prev) => {
+      const nextState = {
+        ...prev,
+        connections: {
+          ...prev.connections,
+          [connectionId]: on,
+        },
+      };
+
+      // Fire and forget the API call to save settings
+      fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [autoPingSettingsKey]: next }),
+        body: JSON.stringify({ [autoPingSettingsKey]: nextState }),
+      }).catch((error) => {
+        console.log("Error saving auto-ping config:", error);
       });
-    } catch (error) {
-      console.log("Error saving auto-ping config:", error);
-    }
-  };
 
-  const handleAutoPingConnection = (connectionId, on) => {
-    saveAutoPing({ ...autoPing, connections: { ...autoPing.connections, [connectionId]: on } });
+      return nextState;
+    });
   };
 
   useEffect(() => {
